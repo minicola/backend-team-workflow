@@ -1,0 +1,10 @@
+{
+  "name": "backend-team-workflow",
+  "description": "后端团队工作流：以 team 为总入口，串联 analyst / tech-lead / dev / tester / reviewer 五角色，覆盖需求 → 设计 → 开发 → 测试 → 审查全流程",
+  "version": "0.1.0",
+  "author": {
+    "name": "冯宇翔",
+    "email": "yuxiangflll@gmail.com"
+  },
+  "keywords": ["team", "workflow", "backend", "agent-team", "code-review"]
+}
