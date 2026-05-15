@@ -42,20 +42,32 @@ Agent(
 )
 ```
 
-## 关闭成员（完成任务后必须执行）
+**启动同名新一轮成员前必须确认前一轮已收到 `shutdown_approved`**（系统通知 "X has shut down"）。否则系统会自动加 `-2`/`-3` 后缀，导致后续 SendMessage 定位错误。
+
+## 关闭成员（shutdown 协议，不可省略任何一步）
+
 ```
 SendMessage(
   to: "{角色name}",
   message: {"type": "shutdown_request"}
 )
 ```
-**规则：成员完成当前阶段任务后，必须立即发送 shutdown_request 关闭该成员，释放资源。**
+
+1. **发送 shutdown_request 后必须等待 `shutdown_approved` 响应**（系统通知 "X has shut down"）
+2. 收到 shutdown_approved 才算真正关闭，可以推进流程
+3. 等待超过 60 秒未响应 → 标记为**孤儿进程候选**，记录到 findings.md，流程结束时统一检查
+
+**规则**：成员完成当前阶段任务后必须立即发送 shutdown_request；下一步动作（如启动新轮成员、TeamDelete）必须在 shutdown_approved 之后执行。
 
 ## 清理团队
-所有成员关闭后：
+
+**前置条件**：所有成员已收到 `shutdown_approved`。如有未响应成员，先记录为孤儿候选再 TeamDelete。
+
 ```
 TeamDelete()
 ```
+
+**TeamDelete 仅清理 config + 任务列表，不会 kill 成员进程**。Phase 6 必须执行孤儿进程检查（见 6.6）。
 
 ---
 
@@ -158,7 +170,12 @@ Agent(
   name: "dev",
   team_name: "dev-team-{简短描述}",
   model: sonnet,
-  prompt: "你是开发团队的后端开发工程师。执行 /dev 技能。读取 .claude/workspace/architecture.md 实现编码。每完成一个模块通知 team lead 进度。完成全部编码后通知 team lead。"
+  prompt: "你是开发团队的后端开发工程师。执行 /dev 技能。读取 .claude/workspace/architecture.md 实现编码。每完成一个模块通知 team lead 进度。完成全部编码后通知 team lead。
+
+**改动纪律（贯穿你的整个生命周期）**：
+1. **Phase 3 编码阶段**：如发现 architecture.md 有盲区或漏洞，可主动加固，但加固完成后**立即 SendMessage 给 team-lead 报告**（写明：发现的问题 + 你的修复方式 + 是否需要 tech-lead 复核）
+2. **Phase 4/5 待命阶段（你已完成编码后保持存活）**：**严禁主动修改代码**。即使发现新 bug 也只能通过 SendMessage 报告，不许擅自动手——这会让 tester 报告基于过期代码视图、reviewer 审查白做
+3. **修复阶段**（team-lead 召回你时）：仅修复指定的 bug 清单，不借机做其他改动；修复完成后立即返回待命"
 )
 ```
 
@@ -212,13 +229,33 @@ TaskUpdate(taskId: "Phase3", status: "completed")
 
 **WHILE 当前测试轮次 ≤ 3:**
 
+#### 4.0 通知 dev 进入测试冻结期（首轮必发）
+
+```
+SendMessage(
+  to: "dev",
+  message: "进入 Phase 4 测试阶段，**代码冻结纪律生效**：测试期间禁止主动修改代码，即使发现新 bug 也只能通过 SendMessage 报告，不许擅自动手。等待 team-lead 召回（如 tester 报告 BLOCK）才能修复。回复确认后保持 idle。"
+)
+```
+
+等待 dev 确认（idle 即视为已生效）。
+
 #### 4.1 启动 tester 成员
+
+**前置**：如非首轮，确认前一轮 tester 已收到 shutdown_approved（避免 name 冲突自动改名 `tester-2`）。
+
 ```
 Agent(
   name: "tester",
   team_name: "dev-team-{简短描述}",
   model: sonnet,
-  prompt: "你是开发团队的测试工程师。执行 /tester 技能{当前轮次 > 1 ? '（回归测试模式）' : ''}。读取 workspace 中的 task_plan.md、architecture.md 进行测试。完成后通知 team lead。"
+  prompt: "你是开发团队的测试工程师。执行 /tester 技能{当前轮次 > 1 ? '（回归测试模式）' : ''}。读取 workspace 中的 task_plan.md、architecture.md 进行测试。完成后通知 team lead。
+
+**代码视图一致性纪律（不可跳过）**：
+1. **测试开始前**：执行 `git diff master...HEAD` 捕获当前完整变更基准，记录变更文件清单和 stat 到 test_report.md 的『测试基准』章节（含 commit hash 或 working tree 状态）
+2. **测试中**：所有『代码现状』陈述必须通过 Read 实际文件 + 引用具体 `文件:行号` 验证，**不允许仅依赖 architecture.md / task_plan.md 的描述**做结论
+3. **写最终结论前**：再次执行 `git diff master...HEAD`，与基准对比；如发现差异（dev 在测试期间改了代码），**立即 SendMessage 给 team-lead 暂停**，不要写最终结论。team-lead 决定是从头重测还是仅做增量回归
+4. 报告中所有『已删除』『已修改』『未覆盖』等断言必须配上具体文件:行号引用"
 )
 ```
 
@@ -241,12 +278,12 @@ SendMessage(to: "tester", message: {"type": "shutdown_request"})
   ```
   SendMessage(
     to: "dev",
-    message: "修复模式：测试第 {N} 轮未通过。请读取 test_report.md 中的 Bug 清单进行修复。修复后重新执行 code-simplifier。完成后通知 team lead。"
+    message: "修复模式：测试第 {N} 轮未通过。请读取 test_report.md 中的 Bug 清单进行修复。修复后重新执行 code-simplifier。**仅修复指定 Bug，不要借机做其他改动**；完成后通知 team lead 并立即返回待命，代码冻结纪律继续生效。"
   )
   ```
   → 等待 dev 修复完成
   → 当前测试轮次 += 1
-  → 回到 4.1 启动新的 tester 实例
+  → 回到 4.1 启动新的 tester 实例（前置：确认前一轮 tester 已 shutdown_approved）
 
 **IF 当前测试轮次 > 3：**
   → **暂停**，展示 Bug 变化趋势和 findings.md
@@ -300,26 +337,26 @@ SendMessage(to: "reviewer", message: {"type": "shutdown_request"})
   ```
   SendMessage(
     to: "dev",
-    message: "修复模式：代码审查第 {N} 轮 BLOCK。请读取 review_report.md 中的问题清单进行修复。修复后重新执行 code-simplifier。完成后通知 team lead。"
+    message: "修复模式：代码审查第 {N} 轮 BLOCK。请读取 review_report.md 中的问题清单进行修复。修复后重新执行 code-simplifier。**仅修复指定问题，不要借机做其他改动**；完成后通知 team lead 并立即返回待命，代码冻结纪律继续生效。"
   )
   ```
   → 等待 dev 修复完成
   → **修复后必须经过 tester 回归**（防止修复引入新 bug）：
-    启动新的 tester 实例：
+    启动新的 tester 实例（前置：确认前一轮 tester 已 shutdown_approved）：
     ```
     Agent(
       name: "tester",
       team_name: "dev-team-{简短描述}",
       model: sonnet,
-      prompt: "你是开发团队的测试工程师。执行 /tester 技能（回归测试模式）。仅回归 reviewer 要求修复的变更及关联影响。完成后通知 team lead。"
+      prompt: "你是开发团队的测试工程师。执行 /tester 技能（回归测试模式）。仅回归 reviewer 要求修复的变更及关联影响。完成后通知 team lead。代码视图一致性纪律：测试前后两次 git diff 对比、所有代码现状陈述引用文件:行号——同 Phase 4.1。"
     )
     ```
-    → 等待 tester 完成 → 关闭 tester：
+    → 等待 tester 完成 → 关闭 tester（等待 shutdown_approved 后再继续）：
     ```
     SendMessage(to: "tester", message: {"type": "shutdown_request"})
     ```
   → 当前审查轮次 += 1
-  → 回到 5.1 启动新的 reviewer 实例
+  → 回到 5.1 启动新的 reviewer 实例（前置：确认前一轮 reviewer 已 shutdown_approved）
 
 **IF 当前审查轮次 > 3：**
   → **暂停**，展示 review_report.md 和 findings.md
@@ -331,8 +368,14 @@ TaskUpdate(taskId: "Phase5", status: "completed")
 
 ## Phase 6: 收尾归档
 
-### 6.1 确认所有成员已关闭
-确保 analyst、tech-lead、dev、tester、reviewer 均已收到 shutdown_request。
+### 6.1 验证所有成员已正常关闭
+
+按角色清单逐一确认收到 `shutdown_approved`（系统通知 "X has shut down"）：
+- analyst / tech-lead / dev / tester（最后一轮）/ reviewer（最后一轮）
+
+如有成员仅 idle 但未发回 shutdown_approved（例如成员在 shutdown_request 到达前已 idle 完最后一轮工作）：
+- 标记为**孤儿进程候选**
+- 在 Phase 6.6 用 ps 验证并报告给用户
 
 ### 6.2 汇总报告
 ```markdown
@@ -375,7 +418,23 @@ mv .claude/workspace/findings.md .claude/workspace/archive/{目录}/
 TeamDelete()
 ```
 
-### 6.6 最终提示
+### 6.6 孤儿进程检查（必须执行）
+
+TeamDelete 仅清理 config 文件，**不会 kill 成员进程**。任何在 6.1 标记为孤儿候选的成员都可能仍在运行。
+
+```bash
+ps aux | grep -E "agent-name [^ ]+@dev-team-{简短描述}" | grep -v grep
+```
+
+如果发现仍在运行的成员进程：
+1. 列出进程清单（PID + agent-name + 启动时长）展示给用户
+2. 说明这些是 TeamDelete 后未正常 shutdown 的孤儿进程
+3. 提供 `kill <PID>` 命令，**等用户授权后再执行**（kill 属于 destructive 操作）
+4. 把孤儿成员的 name 和触发场景记录到本次任务的 findings.md（作为流程改进的输入）
+
+如果未发现孤儿进程：仅输出一行确认即可（"无孤儿进程"）。
+
+### 6.7 最终提示
 - feature 分支已就绪
 - 是否需要合并到目标分支或创建 PR
 
@@ -425,6 +484,9 @@ TaskUpdate(taskId: "Phase6", status: "completed")
 1. **tester 和 reviewer 阶段绝对不可跳过** — 无论从哪个入口进入
 2. **reviewer BLOCK 后修复必须经过 tester 回归** — 防止修复引入新 bug
 3. **闭环超限必须暂停** — 不允许无限循环消耗 token
-4. **成员完成任务后必须 shutdown** — 及时释放资源，不留空闲成员
-5. **流程结束必须 TeamDelete** — 清理团队配置和任务列表
+4. **成员完成任务后必须 shutdown 并等待 shutdown_approved** — 仅发送 shutdown_request 不算关闭，必须等系统返回 "X has shut down" 通知；下一步动作（启动新轮成员、TeamDelete）必须在 shutdown_approved 之后
+5. **流程结束必须 TeamDelete + 孤儿进程检查** — TeamDelete 不 kill 进程，必须执行 Phase 6.6
 6. **不替代角色执行** — 编排指挥官只调度，不直接编码/测试/审查
+7. **dev 在 Phase 4/5 待命期间禁止主动改代码** — 即使发现新 bug 也只能 SendMessage 报告，由 team-lead 决定何时召回修复（避免让 tester/reviewer 报告基于过期代码视图）
+8. **tester 提交报告前必须 verify 代码视图未变** — 通过 git diff 与测试基准对比；如发现 dev 在测试期间改了代码，立即暂停而非继续写结论
+9. **启动同名新一轮成员前必须等前一轮 shutdown_approved** — 避免系统自动加 `-2`/`-3` 后缀导致 SendMessage 定位错误
