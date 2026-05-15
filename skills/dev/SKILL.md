@@ -96,8 +96,21 @@ echo "MARKET_OK=$MARKET_OK PLUGIN_OK=$PLUGIN_OK CODEX_AVAILABLE=$CODEX_AVAILABLE
 - 理由: <一句话>
 ```
 
+**任一探测失败必须在 progress.md「编码引擎」块下追加排查指引**，让用户能在不重启全流程的前提下自己判断是否启用 Codex（不要让用户去翻 dev/SKILL.md 找原因）：
+
+```markdown
+### 排查指引（降级原因 + 启用步骤）
+- market_ok=false → 未添加 openai/codex-plugin-cc 市场：
+  `/plugin marketplace add openai/codex-plugin-cc`
+- plugin_ok=false → 市场已添加但未安装 codex 插件：
+  `/plugin install codex@openai-codex`
+- skill_visible=false（且前两项已 true）→ **项目级白名单挤掉了 codex**：
+  当前项目 `.claude/settings.json` 的 `enabledPlugins` 字段一旦存在就是**白名单语义**（不是补集），全局已启用的插件如果没在该白名单里出现，会话内一律不可见。
+  修复：在该字段追加 `"codex@openai-codex": true`，然后**重开 Claude Code 会话**（项目级 enabledPlugins 在 session start 时读取，不重开当前会话不生效）。
+```
+
 - **Codex 模式**（三条件全通）→ Step 3 中遇到"实现代码"的子步骤一律用 `Skill(codex:rescue, args: "<任务描述>")` 委派
-- **Claude 模式**（任一条件不满足）→ 沿用现有 Claude Code 自实现路径
+- **Claude 模式**（任一条件不满足）→ 沿用现有 Claude Code 自实现路径，同时按上面格式输出排查指引，便于用户后续启用 Codex
 
 ### 1.5.3 Codex 模式下的委派协议
 
