@@ -23,7 +23,15 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 # 启动总入口（在目标业务项目里使用）
 /backend-team-workflow:team <需求描述或PRD路径>
+
+# 任意节点切入（跳过上游 phase）
+/backend-team-workflow:team --from=tech-lead [<需求补充>]   # 预置 task_plan.md，从技术设计开始
+/backend-team-workflow:team --from=dev [<需求补充>]         # 预置 task_plan + architecture，从编码开始（含测试/审查闭环）
+/backend-team-workflow:team --from=tester [<需求补充>]      # 已有代码，跑测试+审查闭环
+/backend-team-workflow:team --from=reviewer [<需求补充>]    # 已有代码，仅做一次审查（含 P0 安全审查）
 ```
+
+`--from=X` 等于声明 X 之前的角色不主动启动，但若下游闭环（tester BLOCK / reviewer BLOCK）需要它们，按需首次启动进入"清单驱动模式"。完整决策矩阵见 `skills/team/SKILL.md` §6.1 表。
 
 ## 架构：6 角色 + Agent Team
 
@@ -39,6 +47,8 @@ team (编排，opus)
 ```
 
 理解整体协作必须把 `skills/team/SKILL.md` 当作"主控代码"读：它是唯一驱动所有阶段切换、生命周期管理、闭环判定的逻辑。其余 5 个 skill 只是被它通过 `Agent(...)` 启动并通过 `SendMessage` 召回 / 关停的子角色。
+
+> 注：以上生命周期适用于默认完整流程（`/team` 不带参数）。`/team --from=<phase>` 入口下具体存活范围会按起步 phase 调整，见 `skills/team/SKILL.md` §6.1 表。
 
 ## 跨文件的关键约定
 
@@ -73,12 +83,14 @@ team (编排，opus)
 
 ## 已知陷阱
 
-- **`/dev` ≠ 精简版 `/team`**：`/dev` 走独立 skill，**不含** tester/reviewer 闭环。详见 `skills/team/SKILL.md` 末尾「`/dev` 与本 skill 的关系」节。如需"跳过分析+设计但保留测试+审查"，目前没有任何入口支持。
+- **`/dev` ≠ 精简版 `/team`**：`/dev` 走独立 skill，**不含** tester/reviewer 闭环。如需"跳过分析+设计但保留测试+审查"，使用 `/team --from=dev`（含 Phase 4/5 闭环）；`/dev` 仍是"单 dev 编码无闭环"路径。详见 `skills/team/SKILL.md` 末尾「`/dev` 与本 skill 的关系」节与 §6.1 表。
 - **命名空间冲突**：装本插件后要清理用户级旧 skill 目录 `~/.claude/skills/{analyst,dev,reviewer,team,tech-lead,tester}/`（README 也提到过）。
-- **`/dev` 与 `/team` 都会创建 feature 分支**：`feature/{YYYYMMDD}_{简短描述}`。两者在同一项目接续使用时不要互相覆盖分支。
+- **`/dev` 与 `/team` 都会创建 feature 分支**：`fyx/feature/{YYYYMMDD}_{简短描述}`（带用户前缀 `fyx/`）。两者在同一项目接续使用时不要互相覆盖分支。`/team --from in [dev, tester, reviewer]` 不新建分支而沿用当前分支。
 
 ## 改动 SKILL.md 的注意事项
 
 - 每个 SKILL.md 末尾都有显式的「纪律」节，是该角色的强约束清单。改主流程前先确认不与这些纪律冲突，要么同步更新。
 - 多个 SKILL.md 用近似但不完全一致的措辞描述同一规则（例如"读取项目根 CLAUDE.md"在 4 个角色里都有）。修订时要做整仓搜索，避免只改一处。
 - 沿用已有 SKILL.md 的中文行文风格（角色定义 → 项目约束加载 → 执行步骤 → 纠偏/修复模式 → 纪律）。新角色若加入要保持骨架一致。
+- 改动 team SKILL 主流程前先看 `docs/superpowers/specs/` 与 `docs/superpowers/plans/`——历次大改的 spec/plan 沉淀在这里，可避免无意中违背已确认的设计决策（例如 2026-05-22 的 `/team --from=<phase>` 改造决策记录于 `2026-05-22-team-entry-points-design.md`）。
+- 修改 team SKILL 中 dev 启动 prompt（"dev 启动 prompt 模板"节的"模式 A"）时，**必须同时**修改 Phase 3.1 dev 启动 prompt——两处目前是字面副本，不同步会导致编码模式启动行为与模板描述不一致。
