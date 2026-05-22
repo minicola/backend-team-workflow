@@ -180,6 +180,8 @@ TeamCreate(
 
 ## Phase 1: 需求分析
 
+> **起首守卫**：IF `START_PHASE in [tech-lead, dev, tester, reviewer]` → 跳过整个 Phase 1（不启动 analyst，不读写 task_plan.md，直接进入 Phase 2 的起首守卫）。
+
 ### 1.1 启动 analyst 成员
 ```
 TaskUpdate(taskId: "Phase1", status: "in_progress", owner: "analyst")
@@ -209,6 +211,8 @@ TaskUpdate(taskId: "Phase1", status: "completed")
 
 ## Phase 2: 技术设计
 
+> **起首守卫**：IF `START_PHASE in [dev, tester, reviewer]` → 跳过整个 Phase 2（不启动 tech-lead，直接进入 Phase 3 的起首守卫）。tech-lead 在 Phase 3 dev 偏离时仍可"按需首次启动"进入纠偏模式，见 §6.1 表。
+
 ### 2.1 启动 tech-lead 成员
 ```
 TaskUpdate(taskId: "Phase2", status: "in_progress", owner: "tech-lead")
@@ -235,6 +239,8 @@ TaskUpdate(taskId: "Phase2", status: "completed")
 ---
 
 ## Phase 3: 编码实现
+
+> **起首守卫**：IF `START_PHASE in [tester, reviewer]` → 跳过整个 Phase 3（不启动 dev，不读写 progress.md，直接进入 Phase 4 的起首守卫）。dev 在 Phase 4/5 闭环 BLOCK 时仍可"按需首次启动"进入清单驱动模式，见 §6.1 表与"dev 启动 prompt 模板"节。
 
 ### 3.1 启动 dev 成员
 ```
@@ -293,6 +299,8 @@ TaskUpdate(taskId: "Phase3", status: "completed")
 ---
 
 ## Phase 4: 测试验证（不可跳过）
+
+> **起首守卫**：IF `START_PHASE = reviewer` → 跳过整个 Phase 4（reviewer 起步直接进入 Phase 5）。tester 在 Phase 5 reviewer BLOCK 后仍可"按需首次启动"进入回归测试，见 §6.1 表。
 
 ```
 当前测试轮次 = 1
@@ -368,6 +376,8 @@ TaskUpdate(taskId: "Phase4", status: "completed")
 ---
 
 ## Phase 5: 代码审查（不可跳过）
+
+> **起首守卫**：无（reviewer 是 --from 支持的最后一个起始 phase）。但 `START_PHASE = reviewer` 时本 phase 内的 dev 召回与 tester 回归走"按需首次启动"分支，见 §6.1 表与本 phase 5.4 的"召回 dev"步骤。
 
 ```
 当前审查轮次 = 1
