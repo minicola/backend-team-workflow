@@ -411,13 +411,26 @@ SendMessage(to: "tester", message: {"type": "shutdown_request"})
   → BREAK，进入 Phase 5
 
 **IF 测试结论 = ❌ 未通过：**
-  → 召回 dev 修复（dev 仍存活）：
+
+  **分支 1：dev 已存活（`START_PHASE in [analyst, tech-lead, dev]`）：**
   ```
   SendMessage(
     to: "dev",
     message: "修复模式：测试第 {N} 轮未通过。请读取 test_report.md 中的 Bug 清单进行修复。修复后重新执行 code-simplifier。**仅修复指定 Bug，不要借机做其他改动**；完成后通知 team lead 并立即返回待命，代码冻结纪律继续生效。"
   )
   ```
+
+  **分支 2：dev 未存活（`START_PHASE = tester`，本任务中首次启动 dev）：**
+  ```
+  Agent(
+    name: "dev",
+    team_name: "dev-team-{简短描述}",
+    model: sonnet[1m],
+    prompt: {模式 B — 清单驱动模式 prompt}  # 见"dev 启动 prompt 模板"节
+  )
+  ```
+  启动后立即把 test_report.md 的位置告知 dev（prompt 中已含读取指引）。
+
   → 等待 dev 修复完成
   → 当前测试轮次 += 1
   → 回到 4.1 启动新的 tester 实例（前置：确认前一轮 tester 已 shutdown_approved）
