@@ -31,6 +31,20 @@ argument-hint: "[--from=<phase>] <需求描述或PRD路径，--from=reviewer 时
 
 > Sonnet 一律使用 `[1m]` 后缀启用 1M context 窗口，避免长流程下频繁触发自动压缩导致代码视图丢失。仅 model 字段处需带后缀，其余文档表述沿用 "sonnet"。
 
+## §6.1 按起步 phase 对齐的生命周期
+
+`--from=<phase>` 等于声明"X 之前的角色不主动启动"。下游闭环路径若需要这些角色，按需首次启动并进入对应模式（dev → 清单驱动模式；tech-lead → 纠偏模式）。
+
+| START_PHASE | analyst | tech-lead | dev | tester | reviewer |
+|---|---|---|---|---|---|
+| `analyst` | P1 启 / P1 关 | P2 启 / P3 关 | P3 启 / P5 APPROVE 后关 | 每轮启关 | 每轮启关 |
+| `tech-lead` | — | P2 启 / P3 关 | P3 启 / P5 APPROVE 后关 | 每轮启关 | 每轮启关 |
+| `dev` | — | **按需启动**（dev 偏离时纠偏模式） | P3 启 / P5 APPROVE 后关 | 每轮启关 | 每轮启关 |
+| `tester` | — | — | **按需启动**（BLOCK 时清单驱动模式） | P4 每轮启关 | 每轮启关 |
+| `reviewer` | — | — | **按需启动**（BLOCK 时清单驱动模式） | **按需启动**（reviewer BLOCK 后回归） | P5 每轮启关 |
+
+> 「按需启动」=该角色在本任务中是"首次出现"，team 使用 `Agent(...)` 启动而非 `SendMessage`。首次启动不存在前一轮 shutdown_approved 的等待。
+
 # 成员生命周期管理
 
 ## 启动成员
