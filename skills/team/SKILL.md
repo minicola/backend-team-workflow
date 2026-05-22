@@ -633,12 +633,13 @@ TaskUpdate(taskId: "Phase6", status: "completed")
 | 你想要的效果 | 正确入口 |
 |---|---|
 | 完整流程：需求分析 + 架构设计 + 编码 + 测试 + 审查 + 归档 | `/team <需求>` |
-| 单 dev 直接编码（自行写简版 architecture.md + 自建 feature 分支 + 完成后 code-simplifier）**不含测试/审查闭环** | `/dev <需求>` |
-| 跳过需求分析/架构设计，但仍要 tester/reviewer 闭环 | **当前无任何入口支持此组合。** `/team` 无条件启动 Phase 1（analyst）和 Phase 2（tech-lead），不识别任何"跳过"参数或自然语言说明；`/dev` 则根本不含 tester/reviewer 闭环。若必须要这个组合，目前只能改走 `/team` 完整流程（多花 Phase 1/2 的 token 但功能达到）。改造路径见下方「若未来要实现"精简带闭环"入口」节。 |
+| 已有需求文档（task_plan.md）→ 从技术设计开始 | `/team --from=tech-lead [<需求补充>]` |
+| 已有需求 + 架构（task_plan.md + architecture.md）→ 从编码开始，**保留** 测试/审查闭环 | `/team --from=dev [<需求补充>]` |
+| 已有代码 → 跑测试+审查闭环 | `/team --from=tester [<需求补充>]` |
+| 已有代码 → 只做一次代码审查（含 P0 安全审查） | `/team --from=reviewer [<需求补充>]` |
+| 单 dev 直接编码（自行写简版 architecture.md + 自建 feature 分支 + 完成后 code-simplifier）**不含**测试/审查闭环 | `/dev <需求>` |
 
-## 若未来要实现"精简带闭环"入口
-
-需要在 team skill 的 Phase 0 增加参数识别逻辑，或新增一个独立 skill（**不能**直接用 `/dev` 作为 slash command，因为会与现有 `dev` skill 碰撞命名空间）。
+> `/team --from=dev` ≠ `/dev`：前者**含** Phase 4/5 闭环，后者**不含**。
 
 ---
 
@@ -654,6 +655,7 @@ TaskUpdate(taskId: "Phase6", status: "completed")
 | reviewer-dev 闭环超 3 轮 | 暂停，请求人工介入 |
 | 任何阶段遇到不可解决的问题 | 暂停，展示 findings.md，请求人工介入 |
 | **异常终止/人工中断** | 关闭所有存活成员 → TeamDelete 清理 |
+| **--from=X 前置校验失败** | 暂停，列出缺失文件 + 4 种补齐选项（手写 / 退一档 / 完整流程 / 历史归档复活），不创建团队 |
 
 # 纪律
 
