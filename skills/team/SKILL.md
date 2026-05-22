@@ -666,3 +666,7 @@ TaskUpdate(taskId: "Phase6", status: "completed")
 7. **dev 在 Phase 4/5 待命期间禁止主动改代码** — 即使发现新 bug 也只能 SendMessage 报告，由 team-lead 决定何时召回修复（避免让 tester/reviewer 报告基于过期代码视图）
 8. **tester 提交报告前必须 verify 代码视图未变** — 通过 git diff 与测试基准对比；如发现 dev 在测试期间改了代码，立即暂停而非继续写结论
 9. **启动同名新一轮成员前必须等前一轮 shutdown_approved** — 避免系统自动加 `-2`/`-3` 后缀导致 SendMessage 定位错误
+10. **--from=X 等于声明 X 之前的角色不主动启动** — 但若下游闭环路径需要它们，按需首次启动并使用对应模式 prompt（dev → 清单驱动模式；tech-lead → 纠偏模式）。禁止"--from=X 就完全禁用 X 之前的角色"的简化理解，会破坏闭环可达性
+11. **--from in [dev, tester, reviewer] 时沿用当前分支** — 不新建 feature 分支；启动时打印当前分支供用户确认
+12. **--from=X 的前置校验失败必须立即报错暂停** — 不允许"静默回退到上游 phase 补生成"，否则用户会误以为跳过了实际没跳
+13. **Phase 6 归档/孤儿检查无论起步 phase 如何都必须执行** — 包括 --from=reviewer 一次 APPROVE 的最短路径
