@@ -94,8 +94,11 @@ match --from in:
     - `--from=reviewer` → 清 `review_report.md`
 
 ### 4.4 分支创建
-- `--from in [analyst, tech-lead]` → `git checkout -b feature/{YYYYMMDD}_{简短描述}`
+- 统一命名格式：`fyx/feature/{YYYYMMDD}_{简短描述}`（带用户前缀 `fyx/`）
+- `--from in [analyst, tech-lead]` → `git checkout -b fyx/feature/{YYYYMMDD}_{简短描述}`
 - 其他 → 仅打印当前分支并提示"沿用当前分支，是否继续？Y/n"
+
+> 此格式也适用于现有完整流程 `/team` 的 Phase 0.2 — 实施时需同步修改 team/SKILL.md 现有分支命名代码（旧 `feature/...` → 新 `fyx/feature/...`）。
 
 ### 4.5 TeamCreate
 - team 名规则不变：`dev-team-{简短描述}`
@@ -232,7 +235,7 @@ team 等用户输入再推进。
 ### 8.2 team/SKILL.md 其他章节同步
 
 - **frontmatter `argument-hint`**：扩展为 `[--from=<phase>] <需求描述或PRD路径，--from=reviewer 时可选>`
-- **Phase 0**：完整替换为 §4 的"参数解析 + 前置校验 + 工作空间清理 + 条件分支 + 条件 TaskCreate"
+- **Phase 0**：完整替换为 §4 的"参数解析 + 前置校验 + 工作空间清理 + 条件分支 + 条件 TaskCreate"；分支命名一并改为 `fyx/feature/{YYYYMMDD}_{简短描述}`
 - **Phase 1/2/3/4/5 起首**：各加一行 §5 起首守卫
 - **"成员生命周期管理"表**：在原表下方新增 §6.1 表
 - **"`/dev` 与本 skill 的关系"节**：补对比行—— `/team --from=dev` **含** Phase 4/5 闭环；`/dev` **不含**
@@ -240,13 +243,15 @@ team 等用户输入再推进。
 
 ### 8.3 dev/SKILL.md 同步
 
-dev SKILL 加 3 行说明：识别 prompt 中的"清单驱动模式"标识，跳过 Step 0 的复杂度评估（清单模式不需要升级为 dev-leader 团队）。
+- 加 3 行说明：识别 prompt 中的"清单驱动模式"标识，跳过 Step 0 的复杂度评估（清单模式不需要升级为 dev-leader 团队）
+- 若 dev skill 自身也创建 feature 分支，命令同步为 `fyx/feature/{YYYYMMDD}_{简短描述}`
 
 ### 8.4 项目 CLAUDE.md 同步
 
-`/Users/macpro/claude-plugin/backend-team-workflow/CLAUDE.md` 两处改动：
+`/Users/macpro/claude-plugin/backend-team-workflow/CLAUDE.md` 三处改动：
 - "架构：6 角色 + Agent Team" 节—— 在生命周期表后加一句"具体存活范围会随 `--from=X` 调整，见 team/SKILL.md §6.1"
 - "已知陷阱" 节—— 扩写"`/dev` ≠ 精简版 `/team`"那条：`/team --from=dev` 是真正"跳过分析+设计但保留测试+审查"的入口；`/dev` 仍不含闭环
+- "已知陷阱" 节—— 更新分支命名示例：`feature/{YYYYMMDD}_{简短描述}` → `fyx/feature/{YYYYMMDD}_{简短描述}`（与 §4.4 一致）
 
 ### 8.5 其他 4 个角色 SKILL.md
 analyst / tech-lead / tester / reviewer 的 SKILL.md **无需改动**。它们的 prompt 由 team 在 Agent() 时注入；team 注入了正确模式标识即可。
