@@ -485,28 +485,52 @@ SendMessage(to: "reviewer", message: {"type": "shutdown_request"})
   → BREAK，进入 Phase 6
 
 **IF 结论 = BLOCK：**
-  → 召回 dev 修复（dev 仍存活）：
+
+  ### 5.4.1 召回 dev 修复
+
+  **分支 1：dev 已存活（`START_PHASE in [analyst, tech-lead, dev, tester]`）：**
+  > 说明：`START_PHASE = tester` 时若 Phase 4 触发过 BLOCK，已经在 Phase 4.4 的分支 2 中首次启动过 dev；这里 dev 仍存活。
   ```
   SendMessage(
     to: "dev",
     message: "修复模式：代码审查第 {N} 轮 BLOCK。请读取 review_report.md 中的问题清单进行修复。修复后重新执行 code-simplifier。**仅修复指定问题，不要借机做其他改动**；完成后通知 team lead 并立即返回待命，代码冻结纪律继续生效。"
   )
   ```
+
+  **分支 2：dev 未存活（`START_PHASE = reviewer` 且 Phase 4 未启动 dev，即本任务中首次启动 dev）：**
+  ```
+  Agent(
+    name: "dev",
+    team_name: "dev-team-{简短描述}",
+    model: sonnet[1m],
+    prompt: {模式 B — 清单驱动模式 prompt}  # 见"dev 启动 prompt 模板"节
+  )
+  ```
+
   → 等待 dev 修复完成
-  → **修复后必须经过 tester 回归**（防止修复引入新 bug）：
-    启动新的 tester 实例（前置：确认前一轮 tester 已 shutdown_approved）：
-    ```
-    Agent(
-      name: "tester",
-      team_name: "dev-team-{简短描述}",
-      model: sonnet[1m],
-      prompt: "你是开发团队的测试工程师。执行 /tester 技能（回归测试模式）。仅回归 reviewer 要求修复的变更及关联影响。完成后通知 team lead。代码视图一致性纪律：测试前后两次 git diff 对比、所有代码现状陈述引用文件:行号——同 Phase 4.1。"
-    )
-    ```
-    → 等待 tester 完成 → 关闭 tester（等待 shutdown_approved 后再继续）：
-    ```
-    SendMessage(to: "tester", message: {"type": "shutdown_request"})
-    ```
+
+  ### 5.4.2 修复后必须经过 tester 回归（防止修复引入新 bug）
+
+  **分支 1：tester 历史轮次已运行过（`START_PHASE != reviewer`）：**
+  - 前置：确认前一轮 tester 已 shutdown_approved
+
+  **分支 2：tester 本任务中首次启动（`START_PHASE = reviewer`）：**
+  - 无需等待历史 shutdown_approved（不存在前一轮）
+
+  两个分支共用启动命令：
+  ```
+  Agent(
+    name: "tester",
+    team_name: "dev-team-{简短描述}",
+    model: sonnet[1m],
+    prompt: "你是开发团队的测试工程师。执行 /tester 技能（回归测试模式）。仅回归 reviewer 要求修复的变更及关联影响。完成后通知 team lead。代码视图一致性纪律：测试前后两次 git diff 对比、所有代码现状陈述引用文件:行号——同 Phase 4.1。"
+  )
+  ```
+  → 等待 tester 完成 → 关闭 tester（等待 shutdown_approved 后再继续）：
+  ```
+  SendMessage(to: "tester", message: {"type": "shutdown_request"})
+  ```
+
   → 当前审查轮次 += 1
   → 回到 5.1 启动新的 reviewer 实例（前置：确认前一轮 reviewer 已 shutdown_approved）
 
