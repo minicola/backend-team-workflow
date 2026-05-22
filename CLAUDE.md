@@ -23,7 +23,15 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 # 启动总入口（在目标业务项目里使用）
 /backend-team-workflow:team <需求描述或PRD路径>
+
+# 任意节点切入（跳过上游 phase）
+/backend-team-workflow:team --from=tech-lead [<需求补充>]   # 预置 task_plan.md，从技术设计开始
+/backend-team-workflow:team --from=dev [<需求补充>]         # 预置 task_plan + architecture，从编码开始（含测试/审查闭环）
+/backend-team-workflow:team --from=tester [<需求补充>]      # 已有代码，跑测试+审查闭环
+/backend-team-workflow:team --from=reviewer [<需求补充>]    # 已有代码，仅做一次审查（含 P0 安全审查）
 ```
+
+`--from=X` 等于声明 X 之前的角色不主动启动，但若下游闭环（tester BLOCK / reviewer BLOCK）需要它们，按需首次启动进入"清单驱动模式"。完整决策矩阵见 `skills/team/SKILL.md` §6.1 表。
 
 ## 架构：6 角色 + Agent Team
 
@@ -84,3 +92,5 @@ team (编排，opus)
 - 每个 SKILL.md 末尾都有显式的「纪律」节，是该角色的强约束清单。改主流程前先确认不与这些纪律冲突，要么同步更新。
 - 多个 SKILL.md 用近似但不完全一致的措辞描述同一规则（例如"读取项目根 CLAUDE.md"在 4 个角色里都有）。修订时要做整仓搜索，避免只改一处。
 - 沿用已有 SKILL.md 的中文行文风格（角色定义 → 项目约束加载 → 执行步骤 → 纠偏/修复模式 → 纪律）。新角色若加入要保持骨架一致。
+- 改动 team SKILL 主流程前查阅本地 `docs/` 目录（被 `.gitignore` 忽略，但本地保留历次大改的 spec/plan）——这是设计决策的沉淀位置，可避免无意中违背已确认的方案。
+- 修改 team SKILL 中 dev 启动 prompt（"dev 启动 prompt 模板"节的"模式 A"）时，**必须同时**修改 Phase 3.1 dev 启动 prompt——两处目前是字面副本，不同步会导致编码模式启动行为与模板描述不一致。
