@@ -3,7 +3,7 @@ name: team
 description: 团队编排 - 以 Claude Agent Team 团队协作模式串联需求分析、技术设计、开发、测试、审查全流程。通过 TeamCreate 创建团队，使用共享任务列表驱动协作，成员完成任务后正式关闭释放资源。支持全流程和直接编码两种入口，强制质量闭环。
 user-invocable: true
 disable-model-invocation: true
-argument-hint: <需求描述或PRD文件路径>
+argument-hint: "[--from=<phase>] <需求描述或PRD路径，--from=reviewer 时可选>"
 ---
 
 # 角色定义
