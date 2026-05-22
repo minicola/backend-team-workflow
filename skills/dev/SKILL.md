@@ -42,7 +42,7 @@ argument-hint: <需求描述（直接编码时使用）>
   - 涉及的模块和文件
   - 实现步骤
   - 关键设计决策
-- 自动创建 feature 分支: `feature/{日期}_{简短描述}`
+- 自动创建 feature 分支: `fyx/feature/{日期}_{简短描述}`
 
 读取 `.claude/workspace/findings.md` 了解已知问题。
 
@@ -130,6 +130,15 @@ echo "MARKET_OK=$MARKET_OK PLUGIN_OK=$PLUGIN_OK CODEX_AVAILABLE=$CODEX_AVAILABLE
    - 同一模块 Codex 连续 2 次返回不可编译代码
    - Codex 反复偏离 architecture.md（修改无关文件 / 改了 CLAUDE.md 禁止的依赖）
    - `codex:rescue` 调用本身报错（rescue subagent 故障）
+
+## Step 1.6: 启动模式识别（清单驱动 vs 编码）
+
+**如果 team-lead 在启动 prompt 中显式标注"（清单驱动模式）"**：
+- 跳过 Step 2 复杂度评估（清单驱动场景不需要升级为 dev-leader 团队，规模由 test_report.md / review_report.md 中的问题清单决定）
+- 跳过 Step 3A/3B 模块化实现路径，直接读取 test_report.md 或 review_report.md，按问题清单逐项处理
+- 仍走 Step 1.5 的 Codex/Claude 引擎选择 + Step 4 的格式化/编译/code-simplifier 强制门禁
+
+否则按下文 Step 2 -> 3 -> 4 -> 5 正常流程。
 
 ## Step 2: 复杂度评估
 
