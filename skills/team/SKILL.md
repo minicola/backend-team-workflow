@@ -75,34 +75,106 @@ TeamDelete()
 
 # 执行流程
 
-## Phase 0: 准备
+## Phase 0: 准备（参数解析 + 前置校验 + 条件初始化）
 
-### 0.1 初始化工作空间
-确保 `.claude/workspace/` 目录存在，清理上一次的文件（如有）。
+### 0.0 参数解析
+从 $ARGUMENTS 解析 `--from=<phase>`：
+- 缺省值：`analyst`
+- 合法值：`analyst | tech-lead | dev | tester | reviewer`
+- 非法值 → ❌ 报错列出合法值，**不创建团队，退出**：
+  ```
+  [❌] 非法的 --from 值: {收到的值}
+  合法值: analyst | tech-lead | dev | tester | reviewer
+  ```
 
-### 0.2 创建 feature 分支
-```bash
-git checkout -b feature/{YYYYMMDD}_{简短描述}
+剩余 $ARGUMENTS（去掉 --from=X 之后）作为需求文本，用于后续起步成员的 prompt。
+设当前变量 `START_PHASE = {解析后的 phase 值}`。
+
+### 0.1 前置校验
+按 START_PHASE 跑对应检查（任一失败立即报错退出）：
+
+| START_PHASE | 必备前置 |
+|---|---|
+| `analyst` | 需求文本（去 --from 后的 $ARGUMENTS）非空 |
+| `tech-lead` | `.claude/workspace/task_plan.md` 存在 |
+| `dev` | `.claude/workspace/task_plan.md` 存在 AND `.claude/workspace/architecture.md` 存在 |
+| `tester` | `task_plan.md` + `architecture.md` 都存在 AND（`git diff master...HEAD` 非空 OR working tree 有未提交改动）|
+| `reviewer` | `git diff master...HEAD` 非空 OR working tree 有未提交改动 |
+
+校验失败 → 统一报错模板（**不创建团队，退出**）：
+```
+[❌] --from={START_PHASE} 需要以下前置文件:
+   - .claude/workspace/{缺失文件}  (缺失)
+   {若涉及代码变更校验}: git diff master...HEAD 与 working tree 均无变更
+
+补齐选项:
+  1) 手写 {缺失文件} 后重跑 /team --from={START_PHASE} "..."
+  2) 退一档: /team --from={上游phase} "..." 让上游重新生成
+  3) 完整流程: /team "..."
+  4) 从历史归档复活: ls .claude/workspace/archive/
 ```
 
-### 0.3 创建团队
+### 0.2 工作空间初始化
+- 确保 `.claude/workspace/` 目录存在（不存在则 mkdir）
+
+**IF `START_PHASE in [analyst, tech-lead]`（全新流程语义）：**
+- 检测下游产物清单：`architecture.md` / `findings.md` / `progress.md` / `test_report.md` / `review_report.md`（`START_PHASE=analyst` 时清单加上 `task_plan.md`）
+- 若清单中任一文件存在 → 触发脏工作区交互（暂停并向用户呈现 3 选 1）：
+  ```
+  [⚠️] 检测到 workspace 中已有以下下游产物:
+     - {file} (last modified: {date})
+     ...
+  继续将覆盖。请选择:
+    1) 归档旧产物到 archive/ 后继续 (推荐)
+    2) 直接覆盖
+    3) 取消，先用 --from={能复用的上游phase} 复用现有产物
+  ```
+  - 选 1 → `mkdir -p .claude/workspace/archive/{YYYYMMDD_HHMMSS}_orphaned/ && mv {下游产物} archive/{目录}/`
+  - 选 2 → 删除下游产物清单中所有文件
+  - 选 3 → 退出，不创建团队
+
+**IF `START_PHASE in [dev, tester, reviewer]`（显式复用 workspace）：**
+- 保留 0.1 校验通过的前置文件 + `findings.md`
+- **静默清理**当前起步之后阶段的旧产物（覆盖即可，不需要交互）：
+  - `dev` → 清 `progress.md` / `test_report.md` / `review_report.md`
+  - `tester` → 清 `test_report.md` / `review_report.md`
+  - `reviewer` → 清 `review_report.md`
+
+### 0.3 分支创建
+**IF `START_PHASE in [analyst, tech-lead]`：**
+```bash
+git checkout -b fyx/feature/{YYYYMMDD}_{简短描述}
+```
+
+**IF `START_PHASE in [dev, tester, reviewer]`：**
+- 不新建分支
+- 仅打印当前分支并提示用户确认：
+  ```
+  [ℹ️] 沿用当前分支: {git rev-parse --abbrev-ref HEAD}
+  是否继续？Y/n
+  ```
+- 用户选 n → 退出，不创建团队
+
+### 0.4 创建团队
 ```
 TeamCreate(
   team_name: "dev-team-{简短描述}",
-  description: "开发任务：{需求简述}"
+  description: "开发任务：{需求简述}（起步 phase: {START_PHASE}）"
 )
 ```
 
-### 0.4 初始化进度跟踪
-使用 TaskCreate 创建各阶段任务（团队共享任务列表）：
-```
-TaskCreate(subject: "Phase 1: 需求分析", description: "解析需求，产出 task_plan.md")
-TaskCreate(subject: "Phase 2: 技术设计", description: "设计技术方案，产出 architecture.md")
-TaskCreate(subject: "Phase 3: 编码实现", description: "按技术方案实现代码")
-TaskCreate(subject: "Phase 4: 测试验证", description: "编写和执行测试，产出测试报告")
-TaskCreate(subject: "Phase 5: 代码审查", description: "审查代码质量，产出审查报告")
-TaskCreate(subject: "Phase 6: 收尾归档", description: "归档过程文件，清理团队")
-```
+### 0.5 初始化进度跟踪（按 START_PHASE 条件 TaskCreate）
+仅创建从 START_PHASE 对应阶段开始的 Phase 任务：
+
+| START_PHASE | 创建的 TaskCreate |
+|---|---|
+| `analyst` | Phase 1-6 全部 6 个任务 |
+| `tech-lead` | Phase 2-6 共 5 个任务 |
+| `dev` | Phase 3-6 共 4 个任务 |
+| `tester` | Phase 4-6 共 3 个任务 |
+| `reviewer` | Phase 5-6 共 2 个任务 |
+
+每个 TaskCreate 使用与原版相同的 subject/description（Phase 1: 需求分析 / Phase 2: 技术设计 / Phase 3: 编码实现 / Phase 4: 测试验证 / Phase 5: 代码审查 / Phase 6: 收尾归档）。
 
 ---
 
