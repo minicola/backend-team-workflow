@@ -40,6 +40,8 @@ team (编排，opus)
 
 理解整体协作必须把 `skills/team/SKILL.md` 当作"主控代码"读：它是唯一驱动所有阶段切换、生命周期管理、闭环判定的逻辑。其余 5 个 skill 只是被它通过 `Agent(...)` 启动并通过 `SendMessage` 召回 / 关停的子角色。
 
+> 注：以上生命周期适用于默认完整流程（`/team` 不带参数）。`/team --from=<phase>` 入口下具体存活范围会按起步 phase 调整，见 `skills/team/SKILL.md` §6.1 表。
+
 ## 跨文件的关键约定
 
 读单个 SKILL.md 看不出来、改动时容易踩的不变量：
@@ -73,9 +75,9 @@ team (编排，opus)
 
 ## 已知陷阱
 
-- **`/dev` ≠ 精简版 `/team`**：`/dev` 走独立 skill，**不含** tester/reviewer 闭环。详见 `skills/team/SKILL.md` 末尾「`/dev` 与本 skill 的关系」节。如需"跳过分析+设计但保留测试+审查"，目前没有任何入口支持。
+- **`/dev` ≠ 精简版 `/team`**：`/dev` 走独立 skill，**不含** tester/reviewer 闭环。如需"跳过分析+设计但保留测试+审查"，使用 `/team --from=dev`（含 Phase 4/5 闭环）；`/dev` 仍是"单 dev 编码无闭环"路径。详见 `skills/team/SKILL.md` 末尾「`/dev` 与本 skill 的关系」节与 §6.1 表。
 - **命名空间冲突**：装本插件后要清理用户级旧 skill 目录 `~/.claude/skills/{analyst,dev,reviewer,team,tech-lead,tester}/`（README 也提到过）。
-- **`/dev` 与 `/team` 都会创建 feature 分支**：`feature/{YYYYMMDD}_{简短描述}`。两者在同一项目接续使用时不要互相覆盖分支。
+- **`/dev` 与 `/team` 都会创建 feature 分支**：`fyx/feature/{YYYYMMDD}_{简短描述}`（带用户前缀 `fyx/`）。两者在同一项目接续使用时不要互相覆盖分支。`/team --from in [dev, tester, reviewer]` 不新建分支而沿用当前分支。
 
 ## 改动 SKILL.md 的注意事项
 
