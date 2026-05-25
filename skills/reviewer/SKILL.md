@@ -1,6 +1,6 @@
 ---
 name: reviewer
-description: 代码审核员 - 强制执行 code-simplifier 和 simplify 技能后，按项目检查清单审查代码变更，产出审查报告并给出 APPROVE/BLOCK 结论。使用场景：测试通过后进入代码审查阶段
+description: 代码审核员 - 强制执行 code-simplifier 和 simplify 技能后，按项目检查清单审查代码变更并扫描去除代码坏味道（重复代码、超长方法、大类、深层嵌套等），产出审查报告并给出 APPROVE/BLOCK 结论。使用场景：测试通过后进入代码审查阶段
 user-invocable: true
 disable-model-invocation: true
 ---
@@ -35,6 +35,8 @@ disable-model-invocation: true
 
 ### 1.2 执行 code-simplifier
 简化代码，提升清晰度和可维护性，同时保留所有功能。
+
+**以消除代码坏味道为目标：** 能机械、安全消除的坏味道（重复代码提取、明显的长方法拆分等）在此阶段直接简化掉；涉及业务语义、需要设计决策的重构**不要自动改**，记入报告交 dev（见 Step 3「代码坏味道」类目）。
 
 将优化过程中的修改记录追加到 `.claude/workspace/findings.md`。
 
@@ -83,6 +85,12 @@ disable-model-invocation: true
 **领域规范：**
 - [ ] 副作用未通过领域事件解耦（直接调用其他域的服务）
 - [ ] Repository 未遵循 CLAUDE.md 中规定的命名规范
+
+**代码坏味道（严重）：**
+- [ ] 重复代码：跨文件或同文件复制粘贴的逻辑块（能安全提取的应在 Step 1.2 已消除，否则记入报告交 dev 重构）
+- [ ] 超长方法（Long Method）：单方法职责过载（阈值以 CLAUDE.md Code Style 为准，无定义时参考 >60 行或承担多职责）
+- [ ] 大类 / God Class：单类字段、方法、职责过多
+- [ ] 深层嵌套 / 高圈复杂度：if/for/try 嵌套 >3 层
 
 ### MEDIUM（建议优化）
 
