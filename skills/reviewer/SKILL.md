@@ -100,6 +100,15 @@ disable-model-invocation: true
 - [ ] 缺少 Lombok 注解（手写 getter/setter/constructor）
 - [ ] 不合规的类命名或包路径
 
+**代码坏味道（轻度）：**
+- [ ] 长参数列表（Long Parameter List）：参数 >4~5 个，建议引入参数对象
+- [ ] 数据泥团（Data Clumps）：成组反复出现的相同参数/字段
+- [ ] 基本类型偏执（Primitive Obsession）：用基本类型表达领域概念
+- [ ] 依恋情结（Feature Envy）：方法过度访问其他类的数据
+- [ ] 发散式变化 / 霰弹式修改（一处职责散落多类，或一个改动牵动多处）
+- [ ] 过度/失效注释（用注释掩盖坏代码，或注释与代码不符）
+- [ ] **本次变更引入的**死代码（注释掉的代码块、未使用的私有方法/字段）；pre-existing 无关死代码只在报告提及、不删除
+
 ## Step 4: 产出审查报告
 
 写入 `.claude/workspace/review_report.md`：
@@ -131,7 +140,7 @@ disable-model-invocation: true
 ## HIGH 问题
 ### HI-001: {问题标题}
 - 文件: {file_path:line_number}
-- 类型: Spring Boot 规范 / 数据访问 / 领域规范
+- 类型: Spring Boot 规范 / 数据访问 / 领域规范 / 代码坏味道（严重）
 - 描述: {问题描述}
 - 修复建议: {具体修复方案}
 
@@ -140,6 +149,13 @@ disable-model-invocation: true
 - 文件: {file_path:line_number}
 - 描述: {问题描述}
 - 优化建议: {建议}
+
+## 代码坏味道扫描
+| 类型 | 文件:行号 | 严重级 | 处理方式 |
+|------|----------|--------|---------|
+| {重复代码/超长方法/大类/深层嵌套/长参数列表/...} | {file_path:line_number} | HIGH / MEDIUM | ✅ 已在 Step 1.2 自动简化 / ⏳ 待 dev 重构 |
+
+> 无命中时填「本次变更未发现代码坏味道」。
 
 ## 架构合规性总结
 - 模块边界: ✅ 合规 / ❌ 违规
@@ -168,3 +184,4 @@ disable-model-invocation: true
 3. **每个问题必须给出文件路径和行号** — 不能说"某处有问题"
 4. **审查范围仅限本次变更** — 不评审无关文件
 5. **目标驱动** — 以项目规范和上线标准为判定依据，不做主观的"代码风格偏好"评价
+6. **代码坏味道分级与处理** — 严重坏味道（重复代码、超长方法、大类、深层嵌套）按 HIGH 处理触发 BLOCK，轻度坏味道按 MEDIUM 给建议；能机械、安全消除的优先在 Step 1.2 由 code-simplifier 消除，需设计决策的列入报告交 dev，**reviewer 不自行做需要业务判断的重构**；死代码仅纳入本次变更引入的，pre-existing 无关死代码只提及不删除
