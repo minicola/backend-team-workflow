@@ -92,5 +92,5 @@ team (编排，opus)
 - 每个 SKILL.md 末尾都有显式的「纪律」节，是该角色的强约束清单。改主流程前先确认不与这些纪律冲突，要么同步更新。
 - 多个 SKILL.md 用近似但不完全一致的措辞描述同一规则（例如"读取项目根 CLAUDE.md"在 4 个角色里都有）。修订时要做整仓搜索，避免只改一处。
 - 沿用已有 SKILL.md 的中文行文风格（角色定义 → 项目约束加载 → 执行步骤 → 纠偏/修复模式 → 纪律）。新角色若加入要保持骨架一致。
-- 改动 team SKILL 主流程前先看 `docs/superpowers/specs/` 与 `docs/superpowers/plans/`——历次大改的 spec/plan 沉淀在这里，可避免无意中违背已确认的设计决策（例如 2026-05-22 的 `/team --from=<phase>` 改造决策记录于 `2026-05-22-team-entry-points-design.md`）。
+- 改动 team SKILL 主流程前查阅本地 `docs/` 目录（被 `.gitignore` 忽略，但本地保留历次大改的 spec/plan）——这是设计决策的沉淀位置，可避免无意中违背已确认的方案。
 - 修改 team SKILL 中 dev 启动 prompt（"dev 启动 prompt 模板"节的"模式 A"）时，**必须同时**修改 Phase 3.1 dev 启动 prompt——两处目前是字面副本，不同步会导致编码模式启动行为与模板描述不一致。
