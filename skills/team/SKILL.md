@@ -25,11 +25,11 @@ argument-hint: "[--from=<phase>] <需求描述或PRD路径，--from=reviewer 时
 |------|------|------|---------|---------|
 | 需求分析师 | analyst | opus | Phase 1 | Phase 1 完成后 shutdown |
 | 技术负责人 | tech-lead | opus | Phase 2-3 | Phase 3 完成后 shutdown |
-| 后端开发 | dev | sonnet[1m]/opus | Phase 3-5 | reviewer APPROVE 后 shutdown |
-| 测试工程师 | tester | sonnet[1m] | Phase 4-5 | 每轮测试完成后 shutdown，下轮重新启动 |
-| 代码审核员 | reviewer | sonnet[1m] | Phase 5 | 每轮审查完成后 shutdown，下轮重新启动 |
+| 后端开发 | dev | sonnet/opus | Phase 3-5 | reviewer APPROVE 后 shutdown |
+| 测试工程师 | tester | sonnet | Phase 4-5 | 每轮测试完成后 shutdown，下轮重新启动 |
+| 代码审核员 | reviewer | sonnet | Phase 5 | 每轮审查完成后 shutdown，下轮重新启动 |
 
-> Sonnet 一律使用 `[1m]` 后缀启用 1M context 窗口，避免长流程下频繁触发自动压缩导致代码视图丢失。仅 model 字段处需带后缀，其余文档表述沿用 "sonnet"。
+> `model` 字段是固定枚举，仅接受 `sonnet` | `opus` | `haiku`，不接受 `[1m]` 等 context 后缀（带后缀会被 Agent 工具的参数校验拒绝）。表格与 model 字段一律直接写枚举值。
 
 ## §6.1 按起步 phase 对齐的生命周期
 
@@ -304,7 +304,7 @@ TaskUpdate(taskId: "Phase3", status: "in_progress", owner: "dev")
 Agent(
   name: "dev",
   team_name: "dev-team-{简短描述}",
-  model: sonnet[1m],
+  model: sonnet,
   prompt: "你是开发团队的后端开发工程师。执行 /dev 技能。读取 .claude/workspace/architecture.md 实现编码。每完成一个模块通知 team lead 进度。完成全部编码后通知 team lead。
 
 **改动纪律（贯穿你的整个生命周期）**：
@@ -385,7 +385,7 @@ SendMessage(
 Agent(
   name: "tester",
   team_name: "dev-team-{简短描述}",
-  model: sonnet[1m],
+  model: sonnet,
   prompt: "你是开发团队的测试工程师。执行 /tester 技能{当前轮次 > 1 ? '（回归测试模式）' : ''}。读取 workspace 中的 task_plan.md、architecture.md 进行测试。完成后通知 team lead。
 
 **代码视图一致性纪律（不可跳过）**：
@@ -425,7 +425,7 @@ SendMessage(to: "tester", message: {"type": "shutdown_request"})
   Agent(
     name: "dev",
     team_name: "dev-team-{简短描述}",
-    model: sonnet[1m],
+    model: sonnet,
     prompt: {模式 B — 清单驱动模式 prompt}  # 见"dev 启动 prompt 模板"节
   )
   ```
@@ -461,7 +461,7 @@ TaskUpdate(taskId: "Phase4", status: "completed")
 Agent(
   name: "reviewer",
   team_name: "dev-team-{简短描述}",
-  model: sonnet[1m],
+  model: sonnet,
   prompt: "你是开发团队的代码审核员。执行 /reviewer 技能{当前轮次 > 1 ? '（第 {N} 轮复审）' : ''}。审查当前代码变更。\n\n## 安全审查增强\n如果项目根目录下存在 `.claude/rules/security-categories.md`，请读取它并按其类目清单对本次变更逐项扫描，在 review_report.md 的『安全章节』用下列格式标注每个 P0 类目的状态：\n- 1.1 SQL 注入：✅ 未命中 / ⚠️ 命中（文件:行号，问题说明）/ N/A（本次变更无相关代码）\n- 2.6 凭证日志泄漏：…\n至少覆盖 P0 类目（输入验证、认证、授权、依赖 CVE）。若文件不存在，按现有方式审查即可。\n\n完成后通知 team lead。"
 )
 ```
@@ -502,7 +502,7 @@ SendMessage(to: "reviewer", message: {"type": "shutdown_request"})
   Agent(
     name: "dev",
     team_name: "dev-team-{简短描述}",
-    model: sonnet[1m],
+    model: sonnet,
     prompt: {模式 B — 清单驱动模式 prompt}  # 见"dev 启动 prompt 模板"节
   )
   ```
@@ -522,7 +522,7 @@ SendMessage(to: "reviewer", message: {"type": "shutdown_request"})
   Agent(
     name: "tester",
     team_name: "dev-team-{简短描述}",
-    model: sonnet[1m],
+    model: sonnet,
     prompt: "你是开发团队的测试工程师。执行 /tester 技能（回归测试模式）。仅回归 reviewer 要求修复的变更及关联影响。完成后通知 team lead。代码视图一致性纪律：测试前后两次 git diff 对比、所有代码现状陈述引用文件:行号——同 Phase 4.1。"
   )
   ```
