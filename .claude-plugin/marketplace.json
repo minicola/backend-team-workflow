@@ -8,7 +8,7 @@
     {
       "name": "backend-team-workflow",
       "source": "./",
-      "description": "后端团队工作流：以 team 为总入口，串联 analyst / tech-lead / dev / tester / reviewer 五角色，覆盖需求 → 设计 → 开发 → 测试 → 审查全流程",
+      "description": "后端团队工作流：以 team 为总入口，串联 analyst / tech-lead / dev / tester / reviewer 五角色 + 条件触发的 data-expert 数据治理审查员，覆盖需求 → 设计 → 开发 → 测试 → 审查（含数据层）全流程",
       "version": "0.1.0",
       "keywords": ["team", "workflow", "backend", "agent-team", "code-review"]
     }
