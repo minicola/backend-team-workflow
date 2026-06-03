@@ -219,7 +219,7 @@ dev 自行实现各模块。
 
 ```
 每个 sub-dev 的配置：
-- model: sonnet[1m]  # 启用 1M context，避免长任务下频繁压缩
+- model: sonnet  # 固定枚举值，不接受 [1m] 等 context 后缀
 - isolation: worktree（代码隔离）
 - prompt: 包含具体子任务描述 + 编码规范 + 模块约束
 ```
