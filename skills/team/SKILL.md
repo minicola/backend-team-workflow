@@ -28,8 +28,11 @@ argument-hint: "[--from=<phase>] <需求描述或PRD路径，--from=reviewer 时
 | 后端开发 | dev | sonnet/opus | Phase 3-5 | reviewer APPROVE 后 shutdown |
 | 测试工程师 | tester | sonnet | Phase 4-5 | 每轮测试完成后 shutdown，下轮重新启动 |
 | 代码审核员 | reviewer | sonnet | Phase 5 | 每轮审查完成后 shutdown，下轮重新启动 |
+| 数据治理审查员 | data-expert | sonnet | Phase 5（**条件触发**） | 与 reviewer 同轮启关：每轮审查完成后 shutdown |
 
 > `model` 字段是固定枚举，仅接受 `sonnet` | `opus` | `haiku`，不接受 `[1m]` 等 context 后缀（带后缀会被 Agent 工具的参数校验拒绝）。表格与 model 字段一律直接写枚举值。
+
+> **data-expert 是条件触发成员**：仅当本次变更涉及数据模型（建表/改表/迁移脚本/索引/分库分表）时，team 才在 Phase 5 与 reviewer **并行**启动它；其结论并入 Phase 5 的 BLOCK/APPROVE 判定。判定是否触发的方法见 Phase 5.0。无数据层变更的任务**完全不启动** data-expert，不增加成本。
 
 ## §6.1 按起步 phase 对齐的生命周期
 
@@ -44,6 +47,8 @@ argument-hint: "[--from=<phase>] <需求描述或PRD路径，--from=reviewer 时
 | `reviewer` | — | — | **按需启动**（BLOCK 时清单驱动模式） | **按需启动**（reviewer BLOCK 后回归） | P5 每轮启关 |
 
 > 「按需启动」=该角色在本任务中是"首次出现"，team 使用 `Agent(...)` 启动而非 `SendMessage`。首次启动不存在前一轮 shutdown_approved 的等待。
+
+> **data-expert 不进上表的固定生命周期**：它独立于 START_PHASE，只受"本次变更是否涉及数据模型"这一条件控制。所有起步 phase 最终都会经过 Phase 5，因此 team 在每次进入 Phase 5 时都先跑一次 Phase 5.0 数据变更探测：命中则与 reviewer 同轮启停，未命中则永不启动。`--from=reviewer` 一次 APPROVE 的最短路径同样先跑 5.0 探测。
 
 # 成员生命周期管理
 
@@ -173,7 +178,7 @@ dev 的 Agent() 启动 prompt 分两种模式，由 START_PHASE 与触发时机�
 - 确保 `.claude/workspace/` 目录存在（不存在则 mkdir）
 
 **IF `START_PHASE in [analyst, tech-lead]`（全新流程语义）：**
-- 检测下游产物清单：`architecture.md` / `findings.md` / `progress.md` / `test_report.md` / `review_report.md`（`START_PHASE=analyst` 时清单加上 `task_plan.md`）
+- 检测下游产物清单：`architecture.md` / `findings.md` / `progress.md` / `test_report.md` / `review_report.md` / `data_review.md`（`START_PHASE=analyst` 时清单加上 `task_plan.md`）
 - 若清单中任一文件存在 → 触发脏工作区交互（暂停并向用户呈现 3 选 1）：
   ```
   [⚠️] 检测到 workspace 中已有以下下游产物:
@@ -191,9 +196,9 @@ dev 的 Agent() 启动 prompt 分两种模式，由 START_PHASE 与触发时机�
 **IF `START_PHASE in [dev, tester, reviewer]`（显式复用 workspace）：**
 - 保留 0.1 校验通过的前置文件 + `findings.md`
 - **静默清理**当前起步之后阶段的旧产物（覆盖即可，不需要交互）：
-  - `dev` → 清 `progress.md` / `test_report.md` / `review_report.md`
-  - `tester` → 清 `test_report.md` / `review_report.md`
-  - `reviewer` → 清 `review_report.md`
+  - `dev` → 清 `progress.md` / `test_report.md` / `review_report.md` / `data_review.md`
+  - `tester` → 清 `test_report.md` / `review_report.md` / `data_review.md`
+  - `reviewer` → 清 `review_report.md` / `data_review.md`
 
 ### 0.3 分支创建
 **IF `START_PHASE in [analyst, tech-lead]`：**
@@ -452,11 +457,27 @@ TaskUpdate(taskId: "Phase4", status: "completed")
 最大轮次 = 3
 ```
 
+### 5.0 数据变更探测（决定是否启用 data-expert，进入闭环前执行一次）
+
+判断本次变更是否涉及数据模型，命中任一即 `DATA_CHANGE = true`：
+- `architecture.md` 含「数据模型变更」非空内容（建表/改表/字段变更/索引/分库分表）
+- `git diff master...HEAD`（或 working tree）命中以下任一：迁移脚本（Flyway/Liquibase/`.sql`）、Entity/表结构定义、Mapper XML / `@Query` 改动、索引或分片路由配置
+
+```bash
+# 参考探测（按项目实际路径调整）：命中即视为数据变更
+git diff master...HEAD --name-only | grep -E '(migration|flyway|liquibase|\.sql$|/entity/|Mapper\.xml$|Entity\.java$)' 
+```
+
+- `DATA_CHANGE = true` → 本 Phase 5 每轮都与 reviewer **并行**启动 data-expert
+- `DATA_CHANGE = false` → 全程不启动 data-expert，5.1–5.4 仅按 reviewer 单角色走
+
+> 探测结论记入 findings.md 一行（`DATA_CHANGE=true/false + 命中依据`），便于回溯。
+
 ### 审查-修复闭环
 
 **WHILE 当前审查轮次 ≤ 3:**
 
-#### 5.1 启动 reviewer 成员
+#### 5.1 启动 reviewer 成员（DATA_CHANGE=true 时并行启动 data-expert）
 ```
 Agent(
   name: "reviewer",
@@ -466,16 +487,34 @@ Agent(
 )
 ```
 
-#### 5.2 等待 reviewer 完成
-读取 `.claude/workspace/review_report.md`
+**IF `DATA_CHANGE = true`（5.0 探测命中）→ 同轮并行启动 data-expert：**
+```
+Agent(
+  name: "data-expert",
+  team_name: "dev-team-{简短描述}",
+  model: sonnet,
+  prompt: "你是开发团队的数据治理审查员。执行 /data-expert 技能{当前轮次 > 1 ? '（第 {N} 轮复审）' : ''}。审查本次变更的数据层部分（迁移/表结构/索引/Mapper/分片），产出 data_review.md。完成后通知 team lead。"
+)
+```
+> 前置（非首轮）：确认前一轮 data-expert 已 shutdown_approved（避免自动改名 `data-expert-2`）。reviewer 与 data-expert 并行执行，互不阻塞。
 
-#### 5.3 关闭 reviewer
-无论结果如何，当轮 reviewer 完成后立即关闭：
+#### 5.2 等待审查完成
+- 等待 reviewer 完成 → 读取 `.claude/workspace/review_report.md`
+- IF `DATA_CHANGE = true`：再等待 data-expert 完成 → 读取 `.claude/workspace/data_review.md`
+
+#### 5.3 关闭本轮审查成员
+无论结果如何，当轮成员完成后立即关闭（各自等待 shutdown_approved）：
 ```
 SendMessage(to: "reviewer", message: {"type": "shutdown_request"})
 ```
+IF `DATA_CHANGE = true`：
+```
+SendMessage(to: "data-expert", message: {"type": "shutdown_request"})
+```
 
-#### 5.4 判定
+#### 5.4 判定（reviewer 与 data-expert 结论合并）
+
+> 合并规则：**两者任一 BLOCK → 本轮 BLOCK**；两者都 APPROVE（或 data-expert 未启用且 reviewer APPROVE）→ APPROVE。dev 修复时合并两份报告的问题清单一次性处理。
 
 **IF 结论 = APPROVE：**
   → 关闭 dev（任务全部完成）：
@@ -493,7 +532,7 @@ SendMessage(to: "reviewer", message: {"type": "shutdown_request"})
   ```
   SendMessage(
     to: "dev",
-    message: "修复模式：代码审查第 {N} 轮 BLOCK。请读取 review_report.md 中的问题清单进行修复。修复后重新执行 code-simplifier。**仅修复指定问题，不要借机做其他改动**；完成后通知 team lead 并立即返回待命，代码冻结纪律继续生效。"
+    message: "修复模式：代码审查第 {N} 轮 BLOCK。请读取 review_report.md 中的问题清单进行修复（若本轮启用了 data-expert，**一并读取 data_review.md 的数据层问题清单**，含迁移回滚/索引/一致性）。修复后重新执行 code-simplifier。**仅修复指定问题，不要借机做其他改动**；完成后通知 team lead 并立即返回待命，代码冻结纪律继续生效。"
   )
   ```
 
@@ -548,6 +587,7 @@ TaskUpdate(taskId: "Phase5", status: "completed")
 
 按角色清单逐一确认收到 `shutdown_approved`（系统通知 "X has shut down"）：
 - analyst / tech-lead / dev / tester（最后一轮）/ reviewer（最后一轮）
+- IF `DATA_CHANGE = true`：data-expert（最后一轮）也必须确认已 shutdown_approved
 
 如有成员仅 idle 但未发回 shutdown_approved（例如成员在 shutdown_request 到达前已 idle 完最后一轮工作）：
 - 标记为**孤儿进程候选**
@@ -571,7 +611,7 @@ TaskUpdate(taskId: "Phase5", status: "completed")
 - 审查问题数: {N}，已修复: {N}
 
 ### 产出文件
-- task_plan.md / architecture.md / test_report.md / review_report.md
+- task_plan.md / architecture.md / test_report.md / review_report.md{DATA_CHANGE ? ' / data_review.md' : ''}
 ```
 
 ### 6.3 归档
@@ -582,6 +622,8 @@ mv .claude/workspace/architecture.md .claude/workspace/archive/{目录}/
 mv .claude/workspace/test_report.md .claude/workspace/archive/{目录}/
 mv .claude/workspace/review_report.md .claude/workspace/archive/{目录}/
 mv .claude/workspace/findings.md .claude/workspace/archive/{目录}/
+# IF DATA_CHANGE=true（data_review.md 存在时）：
+mv .claude/workspace/data_review.md .claude/workspace/archive/{目录}/ 2>/dev/null || true
 ```
 
 ### 6.4 条件触发 CLAUDE.md 更新
@@ -672,3 +714,4 @@ TaskUpdate(taskId: "Phase6", status: "completed")
 11. **--from in [dev, tester, reviewer] 时沿用当前分支** — 不新建 feature 分支；启动时打印当前分支供用户确认
 12. **--from=X 的前置校验失败必须立即报错暂停** — 不允许"静默回退到上游 phase 补生成"，否则用户会误以为跳过了实际没跳
 13. **Phase 6 归档/孤儿检查无论起步 phase 如何都必须执行** — 包括 --from=reviewer 一次 APPROVE 的最短路径
+14. **data-expert 条件触发、与 reviewer 同档阻断** — Phase 5.0 探测到数据模型变更才启动，且与 reviewer 并行；其 BLOCK 与 reviewer BLOCK 同等阻断（任一 BLOCK 即本轮 BLOCK）。无数据变更的任务不得启动 data-expert，避免无谓成本

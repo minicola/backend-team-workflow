@@ -10,8 +10,9 @@
 | `analyst` | 需求分析师 | 收到 PRD / 需求变更时 |
 | `tech-lead` | 技术负责人 | 需求分析完成后做技术设计 |
 | `dev` | 后端开发 | 技术方案敲定后编码 |
-| `tester` | 测试工程师 | 开发完成后写并跑测试 |
+| `tester` | 测试工程师 | 开发完成后写并跑测试（含集成边界） |
 | `reviewer` | 代码审核 | 测试通过后做最终审查 |
+| `data-expert` | 数据治理审查员 | **条件触发**：变更涉及数据模型时，Phase 5 与 reviewer 并行审查迁移/索引/一致性 |
 
 ## 安装
 
@@ -33,4 +34,4 @@
 
 ## 注意
 
-本插件接管 6 个 skill 后，`~/.claude/skills/{analyst,dev,reviewer,team,tech-lead,tester}/` 应当移除以避免重复加载。
+本插件接管 7 个 skill 后，`~/.claude/skills/{analyst,dev,reviewer,team,tech-lead,tester,data-expert}/` 应当移除以避免重复加载。

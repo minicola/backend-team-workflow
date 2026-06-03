@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 这是一个 **Claude Code Plugin** 仓库，不是普通代码库：
 - 没有源代码、没有构建系统、没有测试
-- 产品就是 `skills/<role>/SKILL.md` 这 6 份 markdown 文件 + `.claude-plugin/plugin.json`
+- 产品就是 `skills/<role>/SKILL.md` 这 7 份 markdown 文件 + `.claude-plugin/plugin.json`（其中 `data-expert` 是 Phase 5 条件触发成员）
 - "开发"= 编辑 SKILL.md 中的角色指令；"发布"= 提交并让用户重新 `/plugin install` 或 `/reload-plugins` 热生效
 
 不存在 `npm test` / `mvn compile` 之类的入口。提交前的唯一"验证"就是把插件装到一个真实项目上跑一遍 `/team` 或 `/dev`。
@@ -33,20 +33,23 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 `--from=X` 等于声明 X 之前的角色不主动启动，但若下游闭环（tester BLOCK / reviewer BLOCK）需要它们，按需首次启动进入"清单驱动模式"。完整决策矩阵见 `skills/team/SKILL.md` §6.1 表。
 
-## 架构：6 角色 + Agent Team
+## 架构：6 角色 + Agent Team（含 1 个条件触发成员）
 
-整个插件是一个**编排 + 5 角色**的工作流，依赖 Claude Code 的 Agent Team API：`TeamCreate` / `Agent(team_name=…)` / `SendMessage` / `TeamDelete`。
+整个插件是一个**编排 + 5 固定角色 + 1 条件触发角色**的工作流，依赖 Claude Code 的 Agent Team API：`TeamCreate` / `Agent(team_name=…)` / `SendMessage` / `TeamDelete`。
 
 ```
 team (编排，opus)
- ├─ Phase 1: analyst     (opus,   仅 Phase 1)
- ├─ Phase 2: tech-lead   (opus,   Phase 2-3 跨阶段存活，Phase 3 末尾才 shutdown)
- ├─ Phase 3: dev         (sonnet, Phase 3-5 跨阶段存活，reviewer APPROVE 才 shutdown)
- ├─ Phase 4: tester      (sonnet, 每轮重启 — 不跨轮复用)
- └─ Phase 5: reviewer    (sonnet, 每轮重启 — 不跨轮复用)
+ ├─ Phase 1: analyst      (opus,   仅 Phase 1)
+ ├─ Phase 2: tech-lead    (opus,   Phase 2-3 跨阶段存活，Phase 3 末尾才 shutdown)
+ ├─ Phase 3: dev          (sonnet, Phase 3-5 跨阶段存活，reviewer APPROVE 才 shutdown)
+ ├─ Phase 4: tester       (sonnet, 每轮重启 — 不跨轮复用)
+ └─ Phase 5: reviewer     (sonnet, 每轮重启 — 不跨轮复用)
+     └─ data-expert       (sonnet, 条件触发：仅当变更涉及数据模型时，与 reviewer 并行，每轮重启)
 ```
 
-理解整体协作必须把 `skills/team/SKILL.md` 当作"主控代码"读：它是唯一驱动所有阶段切换、生命周期管理、闭环判定的逻辑。其余 5 个 skill 只是被它通过 `Agent(...)` 启动并通过 `SendMessage` 召回 / 关停的子角色。
+理解整体协作必须把 `skills/team/SKILL.md` 当作"主控代码"读：它是唯一驱动所有阶段切换、生命周期管理、闭环判定的逻辑。其余 6 个 skill 只是被它通过 `Agent(...)` 启动并通过 `SendMessage` 召回 / 关停的子角色。
+
+> **data-expert 的触发由 Phase 5.0 的 `DATA_CHANGE` 探测决定**（架构含数据模型变更 OR diff 命中迁移/Entity/Mapper/索引）。命中则与 reviewer 同轮启停、其 BLOCK 与 reviewer 同档阻断；未命中则全程不启动。详见 team/SKILL.md Phase 5.0 与成员配置表下方说明。
 
 > 注：以上生命周期适用于默认完整流程（`/team` 不带参数）。`/team --from=<phase>` 入口下具体存活范围会按起步 phase 调整，见 `skills/team/SKILL.md` §6.1 表。
 
@@ -55,23 +58,24 @@ team (编排，opus)
 读单个 SKILL.md 看不出来、改动时容易踩的不变量：
 
 1. **共享工作区固定在目标项目（不是本仓库）的 `.claude/workspace/`**
-   所有过程文件路径都是硬编码的，6 个角色之间通过它们传递状态：
+   所有过程文件路径都是硬编码的，角色之间通过它们传递状态：
    - `task_plan.md`（analyst 产出）
    - `architecture.md`（tech-lead 产出 / `/dev` 直入时由 dev 自写简版）
-   - `findings.md`（多角色追加：调研结论、纠偏指令、修改记录）
+   - `findings.md`（多角色追加：调研结论、纠偏指令、修改记录、`DATA_CHANGE` 探测结论）
    - `progress.md`（dev 写入）
    - `test_report.md` / `review_report.md`（tester / reviewer 产出）
+   - `data_review.md`（data-expert 产出，**仅 `DATA_CHANGE=true` 时存在**；Phase 0.2 清理与 Phase 6 归档都把它与 `review_report.md` 同档处理）
    改动文件名或目录会同时打破多个 skill，需要全局替换。
 
 2. **每个角色必读"目标项目"根目录的 CLAUDE.md**（注意：不是本仓库这份）
-   analyst / tech-lead / dev / reviewer 的 Step 1 都是「读取项目根 CLAUDE.md」，从中提取 `Service Responsibility Boundary` / `Module Structure` / `Layer Dependencies` / `Tech Stack` / `Package Conventions` / `Important Constraints` 等小节并据此决策。新增角色或调整字段名时，要同步所有读取方。
+   analyst / tech-lead / dev / reviewer / data-expert 的 Step 1 都是「读取项目根 CLAUDE.md」，从中提取 `Service Responsibility Boundary` / `Module Structure` / `Layer Dependencies` / `Tech Stack` / `Package Conventions` / `Important Constraints` 等小节并据此决策（data-expert 侧重 `Tech Stack`/ORM/分库分表与 `Naming Conventions`）。新增角色或调整字段名时，要同步所有读取方。
 
 3. **frontmatter `user-invocable: true` + `disable-model-invocation: true`**
-   6 份 SKILL.md 都带这对字段：只能由用户用 `/<skill>` 主动触发，模型不能自动调用。修改时不要随手改掉。
+   7 份 SKILL.md 都带这对字段：只能由用户用 `/<skill>` 主动触发，模型不能自动调用。修改时不要随手改掉。
 
 4. **生命周期纪律（team/SKILL.md 末尾的"纪律"节）**
    - 成员每完成阶段任务必须发 `{"type": "shutdown_request"}`，不留空闲成员
-   - tester / reviewer **每轮重启新实例**（不要复用旧的）
+   - tester / reviewer / data-expert（命中时）**每轮重启新实例**（不要复用旧的）
    - tech-lead 与 dev **跨阶段存活**，时机到了才 shutdown
    - 流程结束（含异常终止）必须 `TeamDelete()`
 
@@ -81,10 +85,16 @@ team (编排，opus)
 6. **reviewer BLOCK 后修复必须经过 tester 回归**（防止修复引入新 bug）
    这是 Phase 5 的一个非显然规则，写代码或改流程时容易省掉这步。
 
+7. **reviewer 自身改码（simplify/code-simplifier）也必须回归**（reviewer/SKILL.md Step 1.3）
+   reviewer 的优化技能会**实际改动业务代码**且发生在 tester 之后；它一旦改了文件，APPROVE 前必须重跑受影响模块测试，飘红则回滚。这条堵的是"审查员改了码却没人测"的盲区，与第 6 条互补。
+
+8. **data-expert 与 reviewer 同档阻断、条件触发**（team/SKILL.md 纪律 14 + Phase 5.0）
+   仅 `DATA_CHANGE=true` 时启动；其 BLOCK 与 reviewer BLOCK 等价（任一 BLOCK 即本轮 BLOCK），dev 修复时合并两份报告清单。
+
 ## 已知陷阱
 
 - **`/dev` ≠ 精简版 `/team`**：`/dev` 走独立 skill，**不含** tester/reviewer 闭环。如需"跳过分析+设计但保留测试+审查"，使用 `/team --from=dev`（含 Phase 4/5 闭环）；`/dev` 仍是"单 dev 编码无闭环"路径。详见 `skills/team/SKILL.md` 末尾「`/dev` 与本 skill 的关系」节与 §6.1 表。
-- **命名空间冲突**：装本插件后要清理用户级旧 skill 目录 `~/.claude/skills/{analyst,dev,reviewer,team,tech-lead,tester}/`（README 也提到过）。
+- **命名空间冲突**：装本插件后要清理用户级旧 skill 目录 `~/.claude/skills/{analyst,dev,reviewer,team,tech-lead,tester,data-expert}/`（README 也提到过）。
 - **`/dev` 与 `/team` 都会创建 feature 分支**：`fyx/feature/{YYYYMMDD}_{简短描述}`（带用户前缀 `fyx/`）。两者在同一项目接续使用时不要互相覆盖分支。`/team --from in [dev, tester, reviewer]` 不新建分支而沿用当前分支。
 
 ## 改动 SKILL.md 的注意事项
