@@ -156,6 +156,8 @@ IF 起步 phase > 本 phase: 跳过整个 phase
 
 > 注：`--from=dev` 的 Phase 3 首启走 A 编码模式（按 architecture.md 从零实现）。B 模式只出现在 Phase 4/5 被召回时（无论起步 phase 为何）。
 
+> **2026-05-22 实施修正（勘误）**：模式 B 仅用于 dev 在本任务中的首次 Agent() 启动（START_PHASE in [tester, reviewer]）；已存活 dev 的召回一律 SendMessage 修复模式指令，--from=dev 的 Phase 3 首启走模式 A。本节标题与上方注释中「按需首启或后续召回」「无论起步 phase 为何」的表述以此为准。
+
 ### 6.3 tech-lead 的纠偏模式
 `--from=dev` 时若 dev 偏离 architecture，team 首次启动 tech-lead 进入"纠偏模式"，沿用现有纠偏 prompt，无需新模板。
 

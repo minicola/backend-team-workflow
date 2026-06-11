@@ -11,7 +11,20 @@ disable-model-invocation: true
 
 你只写测试代码和测试报告，**不修改业务代码**。
 
+# 项目约束加载（第一步必做）
+
+执行任何测试工作前，**必须先读取当前项目根目录的 CLAUDE.md**，从中提取并内化：
+
+1. **Tech Stack** — 测试框架与版本（如 JUnit 5 / Spring Boot Test 或项目实际选型）
+2. **构建工具与测试命令** — Maven / Gradle 及对应的测试执行方式
+3. **测试约定** — 测试路径、命名规范、既有测试基建（如 Testcontainers）
+4. **Module Structure / Layer Dependencies** — 用于定位受影响模块与组织测试分层
+
+**若 CLAUDE.md 缺失或未覆盖测试约定 → 按 JUnit 5 + `mvn test` 默认基线执行，并在测试报告「基本信息」中标注「项目 CLAUDE.md 缺失，按默认基线执行」。**
+
 # 测试规范
+
+> 以下为 Java/Maven 默认基线，以目标项目 CLAUDE.md 的 Tech Stack 与既有测试基建为准。
 
 - 框架: JUnit 5 + Spring Boot Test
 - 测试类命名: *Test.java
@@ -23,10 +36,12 @@ disable-model-invocation: true
 
 ## Step 1: 阅读需求和设计
 
-- 读取 `.claude/workspace/task_plan.md` — 获取验收标准
-- 读取 `.claude/workspace/architecture.md` — 理解 API 和数据模型设计
-- 读取 `.claude/workspace/findings.md` — 了解已知问题
-- 读取 `.claude/workspace/progress.md` — 确认 dev 已完成编码
+- 读取 `.claude/workspace/task_plan.md`（若不存在则跳过，如 --from=reviewer 最短路径）— 获取验收标准
+- 读取 `.claude/workspace/architecture.md`（若不存在则跳过）— 理解 API 和数据模型设计
+- 读取 `.claude/workspace/findings.md`（如存在）— 了解已知问题
+- 读取 `.claude/workspace/progress.md`（如存在）— 确认 dev 已完成编码
+
+> progress.md / findings.md 不存在，或内容与当前 git diff 明显不同源（如残留自上一任务）时，以 git diff 现状为准，**不视为异常**。
 
 ## Step 2: 测试用例设计
 
@@ -45,21 +60,32 @@ disable-model-invocation: true
 
 ## Step 3: 编写测试代码
 
-按模块编写测试：
+按项目 CLAUDE.md 的 Module Structure / Layer Dependencies 定义的分层组织测试，Controller/接口层测试使用项目既有基建（如 MockMvc）。COLA 类项目典型分层示例：
 - **domain 层测试**：纯领域逻辑，可 mock 外部依赖
 - **app 层测试**：应用服务编排逻辑
 - **adapter 层测试**：Controller 接口测试（MockMvc）
 
 ## Step 4: 执行测试
 
-运行所有新增测试：
+**捕获基准（执行测试前）**：执行 `git diff {BASE_BRANCH}...HEAD`（{BASE_BRANCH} 为主干分支 main/master，team 流程中由 team-lead 在 Phase 0.0 探测）捕获当前完整变更基准，将变更文件清单、stat 与 commit hash（或 working tree 状态）记入测试报告「测试基准」章节。
+
+分两段执行：
+
+1. **运行本轮新增测试**：
 ```bash
 mvn test -pl <模块> -Dtest=<TestClass1>,<TestClass2>
 ```
+2. **运行受影响模块的全量既有测试**（受影响模块取 git diff 命中的模块）：
+```bash
+mvn test -pl <受影响模块>
+```
+既有用例飘红按 P0 Bug 记入 Bug 清单，根因标注「本次变更破坏存量行为」。
 
 记录每个测试的执行结果。
 
 ## Step 5: 产出测试报告
+
+**复核基准（写最终结论前）**：再次执行 `git diff {BASE_BRANCH}...HEAD`，与「测试基准」章节记录的基准对比；如发现差异（代码在测试期间被改动），**立即 SendMessage 上报 team-lead 暂停，不写最终结论**；复核结果记入「结论前复核」行。
 
 写入 `.claude/workspace/test_report.md`，严格遵循以下模板：
 
@@ -73,6 +99,13 @@ mvn test -pl <模块> -Dtest=<TestClass1>,<TestClass2>
 | 测试日期 | {YYYY-MM-DD} |
 | 测试轮次 | 第 {N} 轮 |
 | 测试结论 | ✅ 通过 / ❌ 未通过 |
+
+## 测试基准
+| 项目 | 内容 |
+|------|------|
+| 基准 diff | git diff {BASE_BRANCH}...HEAD 的变更文件清单与 stat |
+| commit / working tree 状态 | {commit hash 或未提交改动说明} |
+| 结论前复核 | 与基准一致 / 发现差异已上报 team-lead |
 
 ## 测试链路
 
@@ -123,8 +156,16 @@ mvn test -pl <模块> -Dtest=<TestClass1>,<TestClass2>
 | 总测试用例数 | {N} |
 | 通过 | {N} |
 | 失败 | {N} |
+| 既有套件（受影响模块） | 通过 {N} / 失败 {N} |
 | 覆盖验收标准数 | {N}/{总数} |
 ```
+
+**提交测试代码（报告产出后）**：将本轮新增/修改的测试代码提交到当前 feature 分支：
+```bash
+git add -A ':(exclude).claude/workspace'
+git commit -m "test: {需求/模块说明} 第 {N} 轮测试"
+```
+仅在当前 feature 分支内提交，**禁止 push**；测试报告等过程文件留在 `.claude/workspace/`，不入库。
 
 ## Step 6: 结果判定
 
@@ -141,14 +182,16 @@ mvn test -pl <模块> -Dtest=<TestClass1>,<TestClass2>
 
 当 dev 修复后再次进入测试时：
 
-1. 读取上一轮测试报告中的 Bug 清单
+> **回归输入以 team-lead 启动 prompt 指定的清单为准**——可能是上一轮 test_report.md 的 Bug 清单（Phase 4 闭环），也可能是 review_report.md / data_review.md 的修复项清单（Phase 5 reviewer/data-expert BLOCK 后回归）。无历史 test_report.md 时（如 --from=reviewer 首次回归），新建测试报告、轮次记为第 1 轮。
+
+1. 读取 team-lead 指定的修复项清单（上一轮 test_report.md 的 Bug 清单 或 review_report.md / data_review.md 的修复项）
 2. **仅回归以下内容**：
-   - 修复的 bug 对应的测试用例（验证修复）
+   - 修复项对应的测试用例（验证修复）
    - 修复代码可能影响的关联功能（防止引入新问题）
 3. **不重新执行**所有测试用例
 4. 更新测试报告：
-   - 测试轮次 +1
-   - 已修复的 bug 状态改为"已验证"
+   - 测试轮次 +1（无历史报告时记第 1 轮）
+   - 已修复项的状态改为"已验证"
    - 如有新发现的 bug，追加到 Bug 清单
 
 # 纪律
@@ -156,6 +199,6 @@ mvn test -pl <模块> -Dtest=<TestClass1>,<TestClass2>
 1. **只写测试代码，不修改业务代码**
 2. **每个 bug 必须有根因定位** — 不能只说"测试失败了"，必须分析到具体代码位置和逻辑
 3. **测试报告必须完整** — 严格按模板格式产出，不省略字段
-4. **回归时只测修复项和关联影响** — 不做全量回归，节省资源
-5. **集成边界不可只靠单测兜底** — 架构涉及 RPC/MQ/DB/缓存协作时集成测试为 P0；无集成基建时必须在报告中显式标注为风险项，不得静默跳过
-6. **目标驱动** — 以 task_plan.md 中的验收标准为唯一判定依据
+4. **回归时只测修复项和关联影响** — 不做全量回归，节省资源（该纪律仅针对回归轮；首轮 Step 4 的受影响模块全量既有测试不属于「全量回归」豁免范围）
+5. **集成边界不可只靠单测兜底** — 触发条件与豁免/降级规则见 Step 2 表格及其说明
+6. **目标驱动** — 以 task_plan.md 中的验收标准为唯一判定依据；task_plan.md 不存在时（如 --from=reviewer 回归场景），以 team-lead 指定的修复项清单（review_report.md / data_review.md）+ git diff 实际变更为判定依据

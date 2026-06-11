@@ -27,14 +27,25 @@ argument-hint: <需求描述（直接编码时使用）>
 7. **Naming Conventions** — 类命名约定（如 Repository 命名规范）
 8. **AI 编码行为约束** — 项目特定的 AI 约束
 
-**所有编码决策必须符合 CLAUDE.md 中的约束。若 CLAUDE.md 缺失 → 暂停，通知用户补充。**
+**所有编码决策必须符合 CLAUDE.md 中的约束。若 CLAUDE.md 缺失 → 暂停，通知用户补充（若作为 team 成员运行：SendMessage 通知 team lead，由其暂停流程向用户求确认，等待转回的答复再继续）。**
 
 # 执行步骤
+
+## Step 0: 启动模式识别（清单驱动 vs 编码）
+
+在读取任何 workspace 文件之前，先判断启动方式：
+
+**如果 team-lead 在启动 prompt 中显式标注"（清单驱动模式）"**：
+- 跳过 Step 2 复杂度评估（清单驱动场景不需要升级为 dev-leader 团队，规模由 test_report.md / review_report.md 中的问题清单决定）
+- 跳过 Step 3A/3B 模块化实现路径，直接读取 test_report.md 或 review_report.md，按问题清单逐项处理；若 `.claude/workspace/data_review.md` 存在，一并读取其数据层问题清单
+- 仍走 Step 4 的格式化/编译/code-simplifier 强制门禁
+
+否则按下文 Step 1 -> 2 -> 3 -> 4 -> 5 正常流程。
 
 ## Step 1: 获取技术方案
 
 **从 /team 流程进入：**
-- 读取 `.claude/workspace/architecture.md`
+- 读取 `.claude/workspace/architecture.md`（清单驱动模式下 architecture.md 可能不存在，缺失则跳过，以 test_report.md / review_report.md 报告清单为准）
 
 **从 /dev 直接进入（$ARGUMENTS 非空）：**
 - 根据用户描述的需求，自行编写简版技术方案
@@ -42,18 +53,11 @@ argument-hint: <需求描述（直接编码时使用）>
   - 涉及的模块和文件
   - 实现步骤
   - 关键设计决策
-- 自动创建 feature 分支: `fyx/feature/{日期}_{简短描述}`
+- 自动创建 feature 分支: `fyx/feature/{YYYYMMDD}_{简短描述}`
+
+**兜底**：若 $ARGUMENTS 为空、`.claude/workspace/architecture.md` 不存在、且启动 prompt 中无 team 标识 → 暂停，向用户索要需求描述（提示：`/dev <需求描述>`）或确认 architecture.md 路径。
 
 读取 `.claude/workspace/findings.md` 了解已知问题。
-
-## Step 1.5: 启动模式识别（清单驱动 vs 编码）
-
-**如果 team-lead 在启动 prompt 中显式标注"（清单驱动模式）"**：
-- 跳过 Step 2 复杂度评估（清单驱动场景不需要升级为 dev-leader 团队，规模由 test_report.md / review_report.md 中的问题清单决定）
-- 跳过 Step 3A/3B 模块化实现路径，直接读取 test_report.md 或 review_report.md，按问题清单逐项处理
-- 仍走 Step 4 的格式化/编译/code-simplifier 强制门禁
-
-否则按下文 Step 2 -> 3 -> 4 -> 5 正常流程。
 
 ## Step 2: 复杂度评估
 
@@ -89,6 +93,7 @@ argument-hint: <需求描述（直接编码时使用）>
   - 已尝试的修复方案
   - 可能的根因分析
   - 请求 tech-lead 纠偏或人工介入
+- 若 ralph-loop 插件不可用 → 退化为手动"编译 → 修错"循环，同样以 3 轮为上限，超限按上述方式上报
 
 每完成一个模块 → 更新 `.claude/workspace/progress.md`。
 
@@ -138,19 +143,21 @@ sub-dev 的 prompt 模板：
 
 ### 3B.3 逐个合并
 
-sub-dev 按完成顺序逐个合并到主分支：
+sub-dev 按完成顺序逐个合并到当前 feature 分支（dev 所在工作分支，即 `fyx/feature/...`）：
 1. 检查 sub-dev 产出的代码
-2. 合并到主分支
+2. 合并到当前 feature 分支（dev 所在工作分支，即 `fyx/feature/...`）
 3. 解决冲突（如有）
 4. 确保合并后编译通过
 5. 继续合并下一个
+
+**严禁向 main/master 直接合并。**
 
 ### 3B.4 偏离检测
 
 每个 sub-dev 完成后，对照 architecture.md 检查：
 - 文件是否放在正确的模块和包下
 - 层级依赖方向是否正确
-- 是否使用了 MapStruct 做映射
+- 是否使用 CLAUDE.md 规定的映射工具做映射
 
 如发现偏离 → 通知 /team 主会话，请求召回 tech-lead 纠偏。
 
@@ -158,11 +165,12 @@ sub-dev 按完成顺序逐个合并到主分支：
 
 编码完成后，**必须**执行以下步骤：
 
-1. 运行 `mvn spotless:apply` 格式化代码
-2. 运行 `mvn compile` 确保全量编译通过
+1. 按 CLAUDE.md Code Style 规定的格式化方式格式化代码（Maven 示例：`mvn spotless:apply`；项目无格式化插件则跳过并记入 findings.md）
+2. 按项目构建工具执行全量编译并确保通过（Maven 示例：`mvn compile`；Gradle 示例：`./gradlew compileJava`）
 3. 执行 code-simplifier 技能，简化代码保持功能不变
 4. 将遇到的问题追加到 `.claude/workspace/findings.md`
 5. 更新 `.claude/workspace/progress.md` 为"编码完成，待提测"
+6. 提交改动：`git add -A ':(exclude).claude/workspace'` && `git commit -m "feat: {模块/修复说明}"` — 在当前 feature 分支内提交，**禁止 push**；提交前确认当前分支非 main/master，是则不提交并上报 team lead（独立 /dev 场景改为提示用户）
 
 ## Step 5: 提测
 
@@ -172,10 +180,11 @@ sub-dev 按完成顺序逐个合并到主分支：
 
 当从 tester 或 reviewer 阶段返回修复时：
 
-1. 读取 `.claude/workspace/test_report.md` 或 `.claude/workspace/review_report.md`
+1. 读取 `.claude/workspace/test_report.md` 或 `.claude/workspace/review_report.md`；从 reviewer 阶段返回且 `.claude/workspace/data_review.md` 存在时，一并读取其数据层问题清单
 2. 只修复报告中标记的问题，**不做额外变更**（dev 自己实现，并做范围校验与本地复编译）
 3. 修复后重新执行 Step 4（格式化 + 编译 + code-simplifier）
-4. 更新 progress.md
+4. 提交修复改动（同 Step 4 第 6 条：排除 `.claude/workspace`，当前 feature 分支内提交，禁止 push，主干分支拦截）
+5. 更新 progress.md
 
 # 纪律
 
@@ -183,5 +192,5 @@ sub-dev 按完成顺序逐个合并到主分支：
 2. **发现设计方案有问题时** — 记录到 findings.md 并请求人工确认，不自行修改设计
 3. **最小化改动** — 不顺手重构不相关的代码，不添加需求外的功能
 4. **每次修改前先读目标文件** — 理解上下文再动手
-5. **ralph-loop 超限必须上报** — 3 轮编译不过必须向 /team 汇报，禁止无限重试
+5. **ralph-loop 超限必须上报** — 3 轮编译不过必须向 /team 汇报，禁止无限重试（ralph-loop 不可用退化为手动编译循环时同样适用）
 6. **目标驱动** — 开始前列出成功标准，执行中检查偏离，结束前验证达成

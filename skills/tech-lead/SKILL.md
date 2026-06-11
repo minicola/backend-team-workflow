@@ -38,12 +38,15 @@ disable-model-invocation: true
    - 基础包路径
    - 各层级子包命名
 
-6. **编码规范** — 查找"Code Style"和"Development Guidelines"章节
+6. **编码规范** — 查找"Code Style"、"Development Guidelines"及"Naming Conventions"章节
    - 层间映射工具（MapStruct vs BeanUtils）
    - Lombok 使用规范
    - Repository 命名约定
 
-**如果 CLAUDE.md 缺失或信息不完整 → 暂停，通知用户补充后再继续。**
+7. **项目禁止事项** — 查找"Important Constraints"章节
+   - 方案不得包含其中禁止的做法
+
+**如果 CLAUDE.md 缺失或信息不完整 → 暂停，通知用户补充后再继续（若作为 team 成员运行：SendMessage 通知 team lead，由 team lead 暂停流程并向用户求确认，等待转回的答复再继续）。**
 
 设计方案中的所有决策必须基于 CLAUDE.md 中的约束，不能违反。
 
@@ -170,14 +173,14 @@ disable-model-invocation: true
 > 与 Step 4 区分：Step 4 查"完整性（有没有漏）"，本步查"合规性（符不符合 CLAUDE.md 架构约束）"。
 
 - [ ] 所有新代码是否放在正确的模块中？
-- [ ] 层级依赖方向是否正确（adapter → app → domain ← infrastructure）？
-- [ ] 是否使用了 MapStruct 做层间转换？
-- [ ] DTO 是否定义在 client 模块？
+- [ ] 层级依赖方向是否符合 CLAUDE.md Layer Dependencies？
+- [ ] 是否使用 CLAUDE.md 规定的映射工具做层间转换？
+- [ ] DTO 是否定义在 CLAUDE.md 规定的接口定义模块？
 - [ ] 是否有不必要的跨模块依赖？
 - [ ] 每个涉及的文件是否给出了完整路径？
 - [ ] 实现步骤是否按模块顺序排列？
 
-展示方案摘要给用户确认后，开发才能开始。**若有开放问题，必须随摘要一并提出，待用户决策后再进入开发。**
+展示方案摘要给用户确认后，开发才能开始（若作为 team 成员运行：SendMessage 通知 team lead，由 team lead 暂停流程并向用户求确认，等待转回的答复再继续）。**若有开放问题，必须随摘要一并提出，待用户决策后再进入开发。**
 
 # 执行步骤（纠偏模式）
 
@@ -199,6 +202,8 @@ disable-model-invocation: true
 
 修正指令追加到 `.claude/workspace/findings.md`。
 
+若修正属于**方案级变更**（接口签名/表结构/模块划分/实现路径改变，而非单纯拉回原方案）→ 同步更新 `.claude/workspace/architecture.md` 对应小节（模块影响分析/API 设计/数据模型变更），并在 findings.md 注明「architecture.md 已随纠偏更新：{小节}」；仅执行层偏离则不改 architecture.md。
+
 # 纪律
 
 1. **只设计方案，不写实现代码**
@@ -207,3 +212,4 @@ disable-model-invocation: true
 4. **方案对比必须客观** — 列出每个方案的真实优劣，不偏向预设结论
 5. **目标驱动** — 开始前列出成功标准，结束前逐条验证
 6. **方案产出前必过缺口审查** — Step 4 八个维度逐项走查，能补的当场补进方案，不能定的列为开放问题随摘要提交用户，**不得隐藏未决项以求方案"看起来完整"**
+7. **方案级纠偏必须回写 architecture.md** — 纠偏中若发生接口签名/表结构/模块划分/实现路径等方案级修正，必须同步更新 architecture.md 对应小节并在 findings.md 注明；仅执行层偏离不改 architecture.md
