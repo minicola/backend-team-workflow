@@ -1,6 +1,6 @@
 ---
 name: dev
-description: 后端开发工程师 - 按技术方案实现代码，支持复杂度动态评估后升级为团队模式（dev-leader + sub-dev），内部使用 ralph-loop 编译迭代，完成后强制执行 code-simplifier。使用场景：技术设计完成后进入编码阶段，或直接编码场景
+description: 后端开发工程师 - 按技术方案实现代码，支持复杂度动态评估后升级为团队模式（dev-leader + sub-dev），内部使用 ralph-loop 编译迭代，完成后强制执行 /simplify + code-simplifier 代码优化。使用场景：技术设计完成后进入编码阶段，或直接编码场景
 user-invocable: true
 disable-model-invocation: true
 argument-hint: <需求描述（直接编码时使用）>
@@ -38,7 +38,7 @@ argument-hint: <需求描述（直接编码时使用）>
 **如果 team-lead 在启动 prompt 中显式标注"（清单驱动模式）"**：
 - 跳过 Step 2 复杂度评估（清单驱动场景不需要升级为 dev-leader 团队，规模由 test_report.md / review_report.md 中的问题清单决定）
 - 跳过 Step 3A/3B 模块化实现路径，直接读取 test_report.md 或 review_report.md，按问题清单逐项处理；若 `.claude/workspace/data_review.md` 存在，一并读取其数据层问题清单
-- 仍走 Step 4 的格式化/编译/code-simplifier 强制门禁
+- 仍走 Step 4 的格式化 / 编译 / /simplify + code-simplifier 强制门禁
 
 否则按下文 Step 1 -> 2 -> 3 -> 4 -> 5 正常流程。
 
@@ -54,6 +54,7 @@ argument-hint: <需求描述（直接编码时使用）>
   - 实现步骤
   - 关键设计决策
 - 自动创建 feature 分支: `fyx/feature/{YYYYMMDD}_{简短描述}`
+- 确保 `.claude/workspace/` 已写入 `.git/info/exclude`（独立 /dev 入口无 team Phase 0.2，需自行补齐）：`grep -qxF '.claude/workspace/' .git/info/exclude 2>/dev/null || echo '.claude/workspace/' >> .git/info/exclude`
 
 **兜底**：若 $ARGUMENTS 为空、`.claude/workspace/architecture.md` 不存在、且启动 prompt 中无 team 标识 → 暂停，向用户索要需求描述（提示：`/dev <需求描述>`）或确认 architecture.md 路径。
 
@@ -61,7 +62,7 @@ argument-hint: <需求描述（直接编码时使用）>
 
 ## Step 2: 复杂度评估
 
-读取 architecture.md 后按以下维度打分：
+**若 architecture.md 已含「复杂度评分」小节（tech-lead 方案设计时已评）→ 直接复用其总分，不重复打分**；否则读取 architecture.md 后按以下维度打分：
 
 | 维度 | 简单(1分) | 中等(2分) | 复杂(3分) |
 |------|----------|----------|----------|
@@ -167,8 +168,8 @@ sub-dev 按完成顺序逐个合并到当前 feature 分支（dev 所在工作�
 
 1. 按 CLAUDE.md Code Style 规定的格式化方式格式化代码（Maven 示例：`mvn spotless:apply`；项目无格式化插件则跳过并记入 findings.md）
 2. 按项目构建工具执行全量编译并确保通过（Maven 示例：`mvn compile`；Gradle 示例：`./gradlew compileJava`）
-3. 执行 code-simplifier 技能，简化代码保持功能不变
-4. 将遇到的问题追加到 `.claude/workspace/findings.md`
+3. 执行代码优化技能（顺序固定）：先 `/simplify` 审查并修复本次变更的复用性/质量/效率问题，再 `code-simplifier` 简化代码保持功能不变；任一技能不可用 → 跳过该项并在 findings.md 标注「技能缺失未执行」，不得卡死流程
+4. 将遇到的问题追加到 `.claude/workspace/findings.md`（按文件头声明的条目格式）
 5. 更新 `.claude/workspace/progress.md` 为"编码完成，待提测"
 6. 提交改动：`git add -A ':(exclude).claude/workspace'` && `git commit -m "feat: {模块/修复说明}"` — 在当前 feature 分支内提交，**禁止 push**；提交前确认当前分支非 main/master，是则不提交并上报 team lead（独立 /dev 场景改为提示用户）
 
@@ -178,11 +179,11 @@ sub-dev 按完成顺序逐个合并到当前 feature 分支（dev 所在工作�
 
 # 修复模式
 
-当从 tester 或 reviewer 阶段返回修复时：
+当以清单驱动模式启动执行修复（team 流程 BLOCK 后启动，每次为新实例，不携带此前编码上下文），或独立场景下被要求按报告修复时：
 
 1. 读取 `.claude/workspace/test_report.md` 或 `.claude/workspace/review_report.md`；从 reviewer 阶段返回且 `.claude/workspace/data_review.md` 存在时，一并读取其数据层问题清单
 2. 只修复报告中标记的问题，**不做额外变更**（dev 自己实现，并做范围校验与本地复编译）
-3. 修复后重新执行 Step 4（格式化 + 编译 + code-simplifier）
+3. 修复后重新执行 Step 4（格式化 + 编译 + /simplify + code-simplifier）
 4. 提交修复改动（同 Step 4 第 6 条：排除 `.claude/workspace`，当前 feature 分支内提交，禁止 push，主干分支拦截）
 5. 更新 progress.md
 

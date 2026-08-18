@@ -9,7 +9,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - 产品就是 `skills/<role>/SKILL.md` 这 7 份 markdown 文件 + `.claude-plugin/plugin.json`（其中 `data-expert` 是 Phase 5 条件触发成员）
 - "开发"= 编辑 SKILL.md 中的角色指令；"发布"= 提交并让用户重新 `/plugin install` 或 `/reload-plugins` 热生效
 
-不存在 `npm test` / `mvn compile` 之类的入口。提交前的唯一"验证"就是把插件装到一个真实项目上跑一遍 `/team` 或 `/dev`。
+不存在 `npm test` / `mvn compile` 之类的入口。提交前的主要"验证"是把插件装到一个真实项目上跑一遍 `/team` 或 `/dev`；此外 `evals/` 下有针对 Phase 0 参数解析/前置校验的 `claude plugin eval` 回归用例（该 CLI 功能目前 early access，未开启时仅作为文档化的验收标准，详见 `evals/README.md`）。
 
 ## 常用操作
 
@@ -35,7 +35,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## 前置依赖（外部技能/插件）
 
-工作流引用 4 个非本插件自带的技能：`ralph-loop`（插件，dev 编译迭代闭环）、`code-simplifier` 与 `simplify`（dev / reviewer 代码优化）、`claude-md-management` 的 `/revise-claude-md`（Phase 6 更新项目 CLAUDE.md，可选）。目标环境未装齐时不会卡死：各角色按各自 SKILL.md 声明的降级路径执行（跳过并在报告标注「技能缺失未执行」/ 退化为手动编译循环）。
+工作流引用 5 个非本插件自带的技能：`ralph-loop`（插件，dev 编译迭代闭环）、`code-simplifier` 与 `simplify`（dev 代码优化，Step 4 提测/修复前执行）、`claude-md-management` 的 `/revise-claude-md`（Phase 6 更新项目 CLAUDE.md，可选）、`release-checklist`（可选，Phase 6.0 上线卡点核对；缺失时降级为读项目根 `release-checklist.yaml`，再缺则用内置通用清单）。目标环境未装齐时不会卡死：各角色按各自 SKILL.md 声明的降级路径执行（跳过并在报告标注「技能缺失未执行」/ 退化为手动编译循环）。
 
 ## 架构：6 角色 + Agent Team（含 1 个条件触发成员）
 
@@ -44,11 +44,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ```
 team (编排，opus)
  ├─ Phase 1: analyst      (opus,   仅 Phase 1)
- ├─ Phase 2: tech-lead    (opus,   Phase 2-3 跨阶段存活，Phase 3 末尾才 shutdown)
- ├─ Phase 3: dev          (sonnet, Phase 3-5 跨阶段存活，reviewer APPROVE 才 shutdown)
+ ├─ Phase 2: tech-lead    (opus,   Phase 2 方案确认后关闭；Phase 3 纠偏时按需重启新实例，即用即关)
+ ├─ Phase 3: dev          (sonnet, Phase 3 编码提交后关闭；Phase 4/5 BLOCK 时按需重启新实例（清单驱动模式），即用即关)
  ├─ Phase 4: tester       (sonnet, 每轮重启 — 不跨轮复用)
- └─ Phase 5: reviewer     (sonnet, 每轮重启 — 不跨轮复用)
-     └─ data-expert       (sonnet, 条件触发：仅当变更涉及数据模型时，reviewer 优化阶段完成后启动、与其只读审查阶段并行，每轮重启)
+ └─ Phase 5: reviewer     (sonnet, 每轮重启 — 不跨轮复用，纯只读审查)
+     └─ data-expert       (sonnet, 条件触发：仅当变更涉及数据模型时，与 reviewer 并行启动（均为纯只读审查），每轮重启)
 ```
 
 理解整体协作必须把 `skills/team/SKILL.md` 当作"主控代码"读：它是唯一驱动所有阶段切换、生命周期管理、闭环判定的逻辑。其余 6 个 skill 只是被它通过 `Agent(...)` 启动并通过 `SendMessage` 召回 / 关停的子角色。
@@ -65,38 +65,39 @@ team (编排，opus)
    所有过程文件路径都是硬编码的，角色之间通过它们传递状态：
    - `task_plan.md`（analyst 产出）
    - `architecture.md`（tech-lead 产出 / `/dev` 直入时由 dev 自写简版）
-   - `findings.md`（多角色追加：调研结论、纠偏指令、修改记录、`DATA_CHANGE` 探测结论）
+   - `findings.md`（多角色追加：调研结论、纠偏指令、修改记录、`DATA_CHANGE` 探测结论；统一条目格式 `## [角色][Phase N] 标题（YYYY-MM-DD）`，格式头由 team Phase 0.2 写入）
    - `progress.md`（dev 写入）
    - `test_report.md` / `review_report.md`（tester / reviewer 产出）
    - `data_review.md`（data-expert 产出，**仅 `DATA_CHANGE=true` 时存在**；Phase 0.2 清理与 Phase 6 归档都把它与 `review_report.md` 同档处理）
+   - `release_checklist.md`（team Phase 6.0 产出的上线工单：卡点三档结论 ✅/⚠️/❌ + 上线步骤 + 回滚预案；与其他报告同档清理/归档，只出工单不拦截流程）
    改动文件名或目录会同时打破多个 skill，需要全局替换。
 
 2. **每个角色必读"目标项目"根目录的 CLAUDE.md**（注意：不是本仓库这份）
    analyst / tech-lead / dev / tester / reviewer / data-expert 的 Step 1 都是「读取项目根 CLAUDE.md」，从中提取 `Service Responsibility Boundary` / `Module Structure` / `Layer Dependencies` / `Tech Stack` / `Package Conventions` / `Important Constraints` 等小节并据此决策（data-expert 侧重 `Tech Stack`/ORM/分库分表与 `Naming Conventions`；tester 侧重 `Tech Stack`/构建工具/测试约定，缺失时按 JUnit5+mvn 默认并在报告标注）。新增角色或调整字段名时，要同步所有读取方。
 
 3. **frontmatter `user-invocable: true` + `disable-model-invocation: true`**
-   7 份 SKILL.md 都带这对字段：只能由用户用 `/<skill>` 主动触发，模型不能自动调用。修改时不要随手改掉。注意：该字段对 Agent Team 队员经 prompt 显式指示执行 /X 的场景是否拦截**未实测验证**；team SKILL 已内置 Read 回退指令（队员无法加载 /X 时改读本插件 `skills/<X>/SKILL.md` 全文并严格遵循）。
+   7 份 SKILL.md 都带这对字段：只能由用户用 `/<skill>` 主动触发，模型不能自动调用。修改时不要随手改掉。拦截边界已经官方文档确认（code.claude.com/docs/en/skills「Control who invokes a skill」及 frontmatter 参考表）：`disable-model-invocation: true` 时 skill 描述不进模型上下文、Skill 工具不可调用、且不会 preload 进 subagent——Agent Team 队员经 prompt 指示执行 /X **必然被拦截**。因此 team SKILL「启动成员」节把 Read 定为标准加载路径（`${CLAUDE_PLUGIN_ROOT}/skills/<X>/SKILL.md`，占位符在 skill 正文中直接解析），不是兜底。
 
 4. **生命周期纪律（team/SKILL.md 末尾的"纪律"节）**
    - 成员每完成阶段任务，team 必须立即向其发 `{"type": "shutdown_request"}`，不留空闲成员
    - tester / reviewer / data-expert（命中时）**每轮重启新实例**（不要复用旧的）
-   - tech-lead 与 dev **跨阶段存活**，时机到了才 shutdown
+   - tech-lead 与 dev **不跨阶段存活**：Phase 2/3 各自完成后立即 shutdown；纠偏（tech-lead）与修复（dev 清单驱动模式）一律按需新实例、即用即关，同名重启前须等前一实例 shutdown_approved
    - 流程结束（含异常终止）必须 `TeamDelete()`
 
 5. **质量闭环上限 = 3 轮**
-   tester↔dev 和 reviewer↔dev↔tester 闭环超过 3 轮必须暂停请求人工。修改这个阈值要同时改 team/SKILL.md 的两处 WHILE 循环。
+   tester↔dev 和 reviewer↔dev↔tester 闭环超过 3 轮必须暂停请求人工。修改这个阈值要同时改 team/SKILL.md 的两处 WHILE 循环。Phase 5 的 5.4.2 回归子循环另有独立上限（同一审查轮内重试 1 次，第二次回归仍未通过即超限暂停），与轮次上限共同构成硬边界。
 
 6. **reviewer BLOCK 后修复必须经过 tester 回归**（防止修复引入新 bug）
    这是 Phase 5 的一个非显然规则，写代码或改流程时容易省掉这步。
 
-7. **reviewer 自身改码（simplify/code-simplifier）也必须回归**（reviewer/SKILL.md Step 1.3）
-   reviewer 的优化技能会**实际改动业务代码**且发生在 tester 之后；它一旦改了文件，APPROVE 前必须重跑受影响模块测试，飘红则回滚。这条堵的是"审查员改了码却没人测"的盲区，与第 6 条互补。
+7. **reviewer 与 data-expert 均为纯只读审查，代码优化全部前置到 dev**（reviewer/SKILL.md 纪律 1、dev/SKILL.md Step 4）
+   /simplify 与 code-simplifier 由 dev 在提测/修复前执行，使所有代码优化都发生在 tester **之前**、天然处于测试保护下。改流程时不要把改码动作移回审查阶段——那会重新打开"审查员改码绕过测试"的盲区（并被迫恢复干净树门禁 / 改码回归 / 回滚的整套护栏与 data-expert 串行启动）。
 
 8. **data-expert 与 reviewer 同档阻断、条件触发**（team/SKILL.md 纪律 14 + Phase 5.0）
    仅 `DATA_CHANGE=true` 时启动（探测逐轮重跑，false→true 单向升级）；其 BLOCK 与 reviewer BLOCK 等价（任一 BLOCK 即本轮 BLOCK），dev 修复时合并两份报告清单。
 
-9. **Git 提交纪律贯穿闭环**（team Phase 0.0/0.3、dev Step 4/修复模式、tester Step 5、reviewer Step 1 门禁）
-   team 启动时探测 `BASE_BRANCH`（main/master），主干上不执行任何提交类操作（0.3 拦截沿用主干）；dev 完成编码/修复、tester 产出测试代码后均在 feature 分支内提交（排除 `.claude/workspace`，禁止 push）；reviewer 开审前要求 working tree 干净（workspace 除外），不干净则经 team-lead 安排提交后再开始——其 Step 1.3 的 `git checkout` 回滚依赖这一前提。
+9. **Git 提交纪律贯穿闭环**（team Phase 0.0/0.3、dev Step 4/修复模式、tester Step 5）
+   team 启动时探测 `BASE_BRANCH`（main/master），主干上不执行任何提交类操作（0.3 拦截沿用主干）；dev 完成编码/修复、tester 产出测试代码后均在 feature 分支内提交（排除 `.claude/workspace`，禁止 push）；reviewer 纯只读开审，审查范围 = 已提交 diff + 未提交改动（正常流程下应为空，如有则并入范围并在报告标注来源待查）。workspace 不入库的主防线是 team 0.2 幂等写入 `.git/info/exclude`（独立 /dev 入口自行补齐）；提交命令中的 `:(exclude)` 是独立入口未经 0.2 时的兜底——**两层都不要随手删**。
 
 ## 已知陷阱
 

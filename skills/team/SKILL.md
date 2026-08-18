@@ -24,29 +24,29 @@ argument-hint: "[--from=<phase>] [<需求描述或PRD路径>]（--from=analyst �
 | 角色 | name | 模型 | 生命周期 | 关闭时机 |
 |------|------|------|---------|---------|
 | 需求分析师 | analyst | opus | Phase 1 | Phase 1 完成后 shutdown |
-| 技术负责人 | tech-lead | opus | Phase 2-3 | Phase 3 完成后 shutdown |
-| 后端开发 | dev | sonnet | Phase 3-5 | reviewer APPROVE 后 shutdown |
+| 技术负责人 | tech-lead | opus | Phase 2 | Phase 2 方案确认后 shutdown；Phase 3 纠偏时按需重启（纠偏模式，即用即关） |
+| 后端开发 | dev | sonnet | Phase 3 | Phase 3 编码提交后 shutdown；Phase 4/5 BLOCK 时按需重启（清单驱动模式，即用即关） |
 | 测试工程师 | tester | sonnet | Phase 4-5 | 每轮测试完成后 shutdown，下轮重新启动 |
 | 代码审核员 | reviewer | sonnet | Phase 5 | 每轮审查完成后 shutdown，下轮重新启动 |
 | 数据治理审查员 | data-expert | sonnet | Phase 5（**条件触发**） | 与 reviewer 同轮启关：每轮审查完成后 shutdown |
 
 > `model` 字段是固定枚举，仅接受 `sonnet` | `opus` | `haiku`，不接受 `[1m]` 等 context 后缀（带后缀会被 Agent 工具的参数校验拒绝）。表格与 model 字段一律直接写枚举值。
 
-> **data-expert 是条件触发成员**：仅当本次变更涉及数据模型（建表/改表/迁移脚本/索引/分库分表）时，team 才在 Phase 5 启动它——在 reviewer 优化阶段（Step 1.1–1.3）完成后启动，与 reviewer 的只读审查阶段（Step 2–4）并行；其结论并入 Phase 5 的 BLOCK/APPROVE 判定。判定是否触发的方法见 Phase 5.0（每轮探测）。无数据层变更（且后续轮未引入数据变更）的任务不启动 data-expert，不增加成本。
+> **data-expert 是条件触发成员**：仅当本次变更涉及数据模型（建表/改表/迁移脚本/索引/分库分表）时，team 才在 Phase 5 启动它——与 reviewer 同时并行启动（两者均为纯只读审查，无视图漂移风险）；其结论并入 Phase 5 的 BLOCK/APPROVE 判定。判定是否触发的方法见 Phase 5.0（每轮探测）。无数据层变更（且后续轮未引入数据变更）的任务不启动 data-expert，不增加成本。
 
 ## §6.1 按起步 phase 对齐的生命周期
 
-`--from=<phase>` 等于声明"X 之前的角色不主动启动"。下游闭环路径若需要这些角色，按需首次启动并进入对应模式（dev → 清单驱动模式；tech-lead → 纠偏模式）。
+`--from=<phase>` 等于声明"X 之前的角色不主动启动"。下游闭环路径若需要这些角色，按需启动并进入对应模式（dev → 清单驱动模式；tech-lead → 纠偏模式）。
 
 | START_PHASE | analyst | tech-lead | dev | tester | reviewer |
 |---|---|---|---|---|---|
-| `analyst` | P1 启 / P1 关 | P2 启 / P3 关 | P3 启 / P5 APPROVE 后关 | 每轮启关 | 每轮启关 |
-| `tech-lead` | — | P2 启 / P3 关 | P3 启 / P5 APPROVE 后关 | 每轮启关 | 每轮启关 |
-| `dev` | — | **按需启动**（dev 偏离时纠偏模式） | P3 启 / P5 APPROVE 后关 | 每轮启关 | 每轮启关 |
+| `analyst` | P1 启 / P1 关 | P2 启 / P2 关（P3 纠偏按需重启） | P3 启 / P3 关（P4/5 修复按需重启） | 每轮启关 | 每轮启关 |
+| `tech-lead` | — | P2 启 / P2 关（P3 纠偏按需重启） | P3 启 / P3 关（P4/5 修复按需重启） | 每轮启关 | 每轮启关 |
+| `dev` | — | **按需启动**（dev 偏离时纠偏模式） | P3 启 / P3 关（P4/5 修复按需重启） | 每轮启关 | 每轮启关 |
 | `tester` | — | — | **按需启动**（BLOCK 时清单驱动模式） | P4 每轮启关 | 每轮启关 |
 | `reviewer` | — | — | **按需启动**（BLOCK 时清单驱动模式） | **按需启动**（reviewer BLOCK 后回归） | P5 每轮启关 |
 
-> 「按需启动」=该角色在本任务中是"首次出现"，team 使用 `Agent(...)` 启动而非 `SendMessage`。首次启动不存在前一轮 shutdown_approved 的等待。
+> 「按需启动/重启」= 每次都用 `Agent(...)` 启动新实例，任务完成（纠偏指令给出 / 修复提交）后立即 shutdown，不跨阶段待命。同名重启前必须确认前一实例已 shutdown_approved（本任务内首次启动无此等待）。
 
 > **data-expert 不进上表的固定生命周期**：独立于 START_PHASE，所有路径（含 `--from=reviewer` 一次 APPROVE 的最短路径）进入 Phase 5 时先跑 5.0 探测（每轮执行），触发与启停规则见上方成员配置表下说明及 Phase 5.0。
 
@@ -55,7 +55,11 @@ argument-hint: "[--from=<phase>] [<需求描述或PRD路径>]（--from=analyst �
 ## 启动成员
 每个成员通过 Agent 工具启动加入团队，具体调用见各 Phase 的字面示例。
 
-若队员报告无法通过 Skill 工具加载 /X 技能（`disable-model-invocation` 的可能限制，待实测确认），指示其用 Read 读取本插件 `skills/<X>/SKILL.md` 全文并严格遵循。
+**技能加载方式（官方文档确认的行为，非兜底）**：本插件 7 个角色 skill 均为 `disable-model-invocation: true`——skill 描述不会进入队员上下文、Skill 工具无法调用、也不会 preload 进 subagent，因此队员**必然无法**通过 /X 加载。各 Phase 的 Agent() prompt 中『执行 /X 技能』字样，发送前一律替换为：
+
+> 用 Read 读取 `${CLAUDE_PLUGIN_ROOT}/skills/X/SKILL.md` 全文并严格遵循其中的执行步骤与纪律
+
+（`${CLAUDE_PLUGIN_ROOT}` 在本 skill 加载时已解析为插件安装绝对路径，直接拼接使用。）该替换仅适用于本插件的 7 个角色 skill；/simplify、code-simplifier、ralph-loop 等外部技能不受此限制，可用性按各角色 SKILL 声明的降级路径处理。
 
 **启动同名新一轮成员前必须确认前一轮已收到 `shutdown_approved`**（系统通知 "X has shut down"）。否则系统会自动加 `-2`/`-3` 后缀，导致后续 SendMessage 定位错误。
 
@@ -87,28 +91,28 @@ TeamDelete()
 
 ## dev 启动 prompt 模板（两种模式）
 
-dev 的 Agent() 启动 prompt 分两种模式，由 START_PHASE 与触发时机决定使用哪个：
+dev 的 Agent() 启动 prompt 分两种模式。dev 不跨阶段存活：Phase 3 编码用模式 A，Phase 4/5 每次修复召回都是模式 B 新实例。
 
 ### 模式 A — 编码模式
 
-**使用时机**：`START_PHASE in [analyst, tech-lead, dev]` 时 Phase 3 首次启动 dev。
+**使用时机**：`START_PHASE in [analyst, tech-lead, dev]` 时 Phase 3 启动 dev。
 
 ```
-你是开发团队的后端开发工程师。执行 /dev 技能。读取 .claude/workspace/architecture.md 实现编码。每完成一个模块通知 team lead 进度。完成全部编码后通知 team lead。
+你是开发团队的后端开发工程师。执行 /dev 技能。读取 .claude/workspace/architecture.md 实现编码。每完成一个模块通知 team lead 进度。
 
-**改动纪律（贯穿你的整个生命周期）**：
-1. **Phase 3 编码阶段**：如发现 architecture.md 有盲区或漏洞，可主动加固，但加固完成后**立即 SendMessage 给 team-lead 报告**（写明：发现的问题 + 你的修复方式 + 是否需要 tech-lead 复核）
-2. **Phase 4/5 待命阶段（你已完成编码后保持存活）**：**严禁主动修改代码**。即使发现新 bug 也只能通过 SendMessage 报告，不许擅自动手——这会让 tester 报告基于过期代码视图、reviewer 审查白做
-3. **修复阶段**（team-lead 召回你时）：仅修复指定的 bug 清单，不借机做其他改动；修复完成后立即返回待命
+**改动纪律**：
+1. 如发现 architecture.md 有盲区或漏洞，可主动加固，但加固完成后**立即 SendMessage 给 team-lead 报告**（写明：发现的问题 + 你的修复方式 + 是否需要 tech-lead 复核）
+2. 完成全部编码并提交后通知 team lead，等待 shutdown_request。后续测试/审查发现的问题由新的 dev 实例按报告清单修复，你不需要待命
 ```
 
-### 模式 B — 清单驱动模式
+### 模式 B — 清单驱动模式（统一修复路径）
 
-**使用时机**：`START_PHASE in [tester, reviewer]` 时 Phase 4 / Phase 5 闭环 BLOCK 后首次启动 dev（dev 在此场景下不存在 Phase 3 编码经历）。
+**使用时机**：Phase 4 tester ❌ / Phase 5 reviewer(+data-expert) BLOCK 后启动 dev。dev 不跨阶段存活，**所有修复召回都走本模式新实例**——无论此前是否有过编码实例，或因 --from 跳过了编码。
 
 ```
 你是开发团队的后端开发工程师（清单驱动模式）。
-当前流程从 --from={START_PHASE} 进入，跳过了 Phase 3 编码阶段。
+先用 Read 读取 ${CLAUDE_PLUGIN_ROOT}/skills/dev/SKILL.md 全文并严格遵循——你的启动方式即其 Step 0 定义的清单驱动模式（跳过复杂度评估与模块化实现，仍走 Step 4 全部门禁并更新 progress.md）；下述任务范围与约束是该模式在本次实例的具体化。
+你以全新实例启动，不携带此前的编码上下文（此前编码可能由前一 dev 实例完成，或因 --from={START_PHASE} 跳过）。
 
 任务范围：根据 {test_report.md | review_report.md} 中列出的"问题/缺口清单"逐项处理——**既包括 Bug 修复，也包括补齐报告指出的缺失实现**；若 .claude/workspace/data_review.md 存在，一并读取其数据层问题清单（迁移回滚/索引/一致性）：
 - 未覆盖的验收标准 → 补实现
@@ -118,11 +122,9 @@ dev 的 Agent() 启动 prompt 分两种模式，由 START_PHASE 与触发时机�
 约束：
 1. 严格在报告清单内行动；清单外的代码即使你认为有问题也只能 SendMessage 报告，不要借机做无关重构或额外功能
 2. 项目根 CLAUDE.md 必读；architecture.md / task_plan.md 若存在必读，存在歧义时以 task_plan.md 为准；两者均不存在时（如 --from=reviewer 最短路径）以报告问题清单 + git diff 现状为准，仍有歧义则 SendMessage 请 team-lead 裁决
-3. 完成后执行 code-simplifier 并保证编译通过
-4. 通知 team lead 并保持 idle，Phase 4/5 代码冻结纪律继续生效
+3. 完成后执行 /simplify 与 code-simplifier 并保证编译通过，随后提交（排除 .claude/workspace，禁止 push）
+4. 完成并提交后通知 team lead，等待 shutdown_request
 ```
-
-> 注：`START_PHASE in [analyst, tech-lead, dev]` 时 Phase 4/5 闭环 BLOCK 后召回 dev 仍用 SendMessage（dev 已存活），SendMessage 内容即"修复模式"指令，由各 Phase 内具体场景描述（见 Phase 4.4 / 5.4）。模式 B 仅用于 dev 在本任务中"首次启动"的场景。
 
 ---
 
@@ -171,13 +173,23 @@ dev 的 Agent() 启动 prompt 分两种模式，由 START_PHASE 与触发时机�
   4) 从历史归档复活: ls .claude/workspace/archive/
 ```
 
-**基线提交（--from=tester/reviewer）**：校验通过后，若 working tree 有未提交改动 → 经用户确认后创建基线提交：`git add -A ':(exclude).claude/workspace'` + `git commit -m "chore: review baseline"`（使 tester 的基准 diff 与 reviewer Step 1.3 的回滚操作安全成立）。
+**基线提交（--from=tester/reviewer）**：校验通过后，若 working tree 有未提交改动 → 经用户确认后创建基线提交：`git add -A ':(exclude).claude/workspace'` + `git commit -m "chore: review baseline"`（使 tester 的基准 diff 有稳定起点、reviewer 审查范围可界定）。
 
 ### 0.2 工作空间初始化
 - 确保 `.claude/workspace/` 目录存在（不存在则 mkdir）
+- **git 排除主防线**：将 `.claude/workspace/` 写入目标项目 `.git/info/exclude`（幂等，不触碰被跟踪文件）：
+  ```bash
+  grep -qxF '.claude/workspace/' .git/info/exclude 2>/dev/null || echo '.claude/workspace/' >> .git/info/exclude
+  ```
+  此后 workspace 文件不会出现在 git status / git add -A 中；各角色提交命令中的 `:(exclude).claude/workspace` 保留，作为独立入口（如单独 /dev、/tester，未经本步）下的兜底
+- **findings.md 格式头**：若 `findings.md` 不存在 → 创建并写入以下格式头；已存在则保留原内容（缺格式头时在文件头补插）。此后**所有角色（含 team 自身）追加条目均按此格式**：
+  ```markdown
+  # Findings
+  > 条目格式：`## [角色][Phase N] 标题（YYYY-MM-DD）`，正文一段；只追加，不修改历史条目。
+  ```
 
 **IF `START_PHASE in [analyst, tech-lead]`（全新流程语义）：**
-- 检测下游产物清单：`architecture.md` / `findings.md` / `progress.md` / `test_report.md` / `review_report.md` / `data_review.md`（`START_PHASE=analyst` 时清单加上 `task_plan.md`）
+- 检测下游产物清单：`architecture.md` / `findings.md` / `progress.md` / `test_report.md` / `review_report.md` / `data_review.md` / `release_checklist.md`（`START_PHASE=analyst` 时清单加上 `task_plan.md`）
 - 若清单中任一文件存在 → 触发脏工作区交互（暂停并向用户呈现 3 选 1）：
   ```
   [⚠️] 检测到 workspace 中已有以下下游产物:
@@ -195,9 +207,9 @@ dev 的 Agent() 启动 prompt 分两种模式，由 START_PHASE 与触发时机�
 **IF `START_PHASE in [dev, tester, reviewer]`（显式复用 workspace）：**
 - 保留 0.1 校验通过的前置文件 + `findings.md`
 - **静默清理**当前起步之后阶段的旧产物（覆盖即可，不需要交互）：
-  - `dev` → 清 `progress.md` / `test_report.md` / `review_report.md` / `data_review.md`
-  - `tester` → 清 `test_report.md` / `review_report.md` / `data_review.md`；`progress.md` 显式保留（支持同任务从 --from=dev 中断后接续；如与本次代码不同源，tester 会按其 Step 1 规则忽略）
-  - `reviewer` → 清 `test_report.md`（避免陈旧报告被当作本次测试结果）/ `review_report.md` / `data_review.md`
+  - `dev` → 清 `progress.md` / `test_report.md` / `review_report.md` / `data_review.md` / `release_checklist.md`
+  - `tester` → 清 `test_report.md` / `review_report.md` / `data_review.md` / `release_checklist.md`；`progress.md` 显式保留（支持同任务从 --from=dev 中断后接续；如与本次代码不同源，tester 会按其 Step 1 规则忽略）
+  - `reviewer` → 清 `test_report.md`（避免陈旧报告被当作本次测试结果）/ `review_report.md` / `data_review.md` / `release_checklist.md`
 
 ### 0.3 分支创建
 **IF `START_PHASE in [analyst, tech-lead]`：**
@@ -288,11 +300,14 @@ Agent(
 ### 2.2 等待 tech-lead 完成方案
 收到完成通知后：
 - 读取 `.claude/workspace/architecture.md`
-- 展示方案对比摘要给用户
-- 用户选择方案 → SendMessage 给 tech-lead（仍存活），由其将 architecture.md 更新为选定方案的详细设计，确认更新完成后继续
+- **IF 多方案对比（标准模式，tech-lead 复杂度评分 > 6）**：展示方案对比摘要给用户 → 用户选择方案 → SendMessage 给 tech-lead（仍存活），由其将 architecture.md 更新为选定方案的详细设计，确认更新完成后继续
+- **IF 单方案（轻量模式，tech-lead 复杂度评分 ≤ 6）**：展示方案摘要 + 免对比理由 + 开放问题，用户确认即继续（无 A/B 选择环节）；用户有异议 → SendMessage 给 tech-lead 按反馈调整，确认后继续
 
-### 2.3 tech-lead 保持存活
-**不关闭 tech-lead**，Phase 3 中可能需要召回纠偏。
+### 2.3 关闭 tech-lead
+方案确认并更新完成后立即关闭（Phase 3 若需纠偏，按需重启新实例进入纠偏模式，即用即关）：
+```
+SendMessage(to: "tech-lead", message: {"type": "shutdown_request"})
+```
 
 TaskUpdate(taskId: "Phase2", status: "completed")
 
@@ -324,23 +339,15 @@ dev 报告模块完成时，检查 findings.md。**偏离判定标准（命中�
 
 仅是方案内的盲区加固且 dev 未请求复核 → 记录 findings.md，不触发纠偏。
 
-- 发现偏离 → 召回 tech-lead 纠偏（按存在性分支）：
-  - **IF tech-lead 本任务中已启动且存活** →
-    ```
-    SendMessage(
-      to: "tech-lead",
-      message: "纠偏模式：dev 在 {模块} 偏离了技术方案。偏离详情：{内容}。请对照 architecture.md 给出修正指令。"
-    )
-    ```
-  - **IF tech-lead 本任务中未启动过（`START_PHASE = dev`）** → Agent() 首次启动进入纠偏模式；纠偏完成后立即发 shutdown_request（按需启动的 tech-lead 不跨阶段存活）：
-    ```
-    Agent(
-      name: "tech-lead",
-      team_name: "dev-team-{简短描述}",
-      model: opus,
-      prompt: "你是开发团队的技术负责人。执行 /tech-lead 技能（纠偏模式）。dev 在 {模块} 偏离了技术方案，偏离详情：{内容}。读取 .claude/workspace/architecture.md 给出修正指令并追加到 findings.md，完成后通知 team lead。"
-    )
-    ```
+- 发现偏离 → 按需启动 tech-lead 纠偏（tech-lead 不跨阶段存活，每次纠偏都是新实例；前置：若本任务已有过 tech-lead 实例，确认其已 shutdown_approved）；纠偏指令给出后立即发 shutdown_request：
+  ```
+  Agent(
+    name: "tech-lead",
+    team_name: "dev-team-{简短描述}",
+    model: opus,
+    prompt: "你是开发团队的技术负责人。执行 /tech-lead 技能（纠偏模式）。dev 在 {模块} 偏离了技术方案，偏离详情：{内容}。读取 .claude/workspace/architecture.md 给出修正指令并追加到 findings.md，完成后通知 team lead。"
+  )
+  ```
 - tech-lead 返回修正指令 → 转发给 dev：
   ```
   SendMessage(
@@ -351,20 +358,17 @@ dev 报告模块完成时，检查 findings.md。**偏离判定标准（命中�
 
 **ralph-loop 超限处理：**
 dev 报告编译 3 轮未通过：
-- 召回 tech-lead 分析（同上按存在性分支：已存活 → SendMessage；未启动过 → Agent() 首启纠偏模式，完成后立即 shutdown）→ tech-lead 给出方案 → 转发 dev
+- 按需启动 tech-lead 分析（同 3.2 纠偏启动方式，完成后立即 shutdown）→ tech-lead 给出方案 → 转发 dev
 - tech-lead 也无法解决 → **暂停**，请求人工介入
 
 ### 3.3 dev 完成编码
-等待 dev 确认：编码完成 + code-simplifier 已执行 + 编译通过 + 改动已提交（feature 分支内，排除 .claude/workspace）。
+等待 dev 确认：编码完成 + /simplify 与 code-simplifier 已执行 + 编译通过 + 改动已提交（feature 分支内，排除 .claude/workspace）。
 
-### 3.4 关闭 tech-lead
-Phase 3 完成后，tech-lead 不再需要。**IF tech-lead 本任务中启动过且仍存活**：
+### 3.4 关闭 dev
+编码提交确认后立即关闭（Phase 4/5 闭环若 BLOCK，按需重启新实例进入清单驱动模式，即用即关）：
 ```
-SendMessage(to: "tech-lead", message: {"type": "shutdown_request"})
+SendMessage(to: "dev", message: {"type": "shutdown_request"})
 ```
-否则（从未启动，或按需启动后已自行关闭）跳过本步。
-
-**dev 保持存活** — Phase 4/5 闭环中需要召回修复。
 
 TaskUpdate(taskId: "Phase3", status: "completed")
 
@@ -383,18 +387,7 @@ TaskUpdate(taskId: "Phase3", status: "completed")
 
 **WHILE 当前测试轮次 ≤ 3:**
 
-#### 4.0 通知 dev 进入测试冻结期（dev 已启动时首轮必发）
-
-> **守卫**：IF dev 本任务中尚未启动（`START_PHASE = tester` 首轮）→ 跳过本步（模式 B prompt 约束 4 已含冻结纪律）。
-
-```
-SendMessage(
-  to: "dev",
-  message: "进入 Phase 4 测试阶段，**代码冻结纪律生效**：测试期间禁止主动修改代码，即使发现新 bug 也只能通过 SendMessage 报告，不许擅自动手。等待 team-lead 召回（如 tester 报告 BLOCK）才能修复。回复确认后保持 idle。"
-)
-```
-
-等待 dev 确认（idle 即视为已生效）。
+> 测试期间团队内没有存活的可改码成员（dev 已于 3.4 关闭或从未启动），代码视图漂移的主要来源只剩用户手工改动/外部进程。tester 的基准 diff 纪律仍然照常执行，作为兜底。
 
 #### 4.1 启动 tester 成员
 
@@ -410,7 +403,7 @@ Agent(
 **代码视图一致性纪律（不可跳过）**：
 1. **测试开始前**：执行 `git diff {BASE_BRANCH}...HEAD` 捕获当前完整变更基准，记录变更文件清单和 stat 到 test_report.md 的『测试基准』章节（含 commit hash 或 working tree 状态）
 2. **测试中**：所有『代码现状』陈述必须通过 Read 实际文件 + 引用具体 `文件:行号` 验证，**不允许仅依赖 architecture.md / task_plan.md 的描述**做结论
-3. **写最终结论前**：再次执行 `git diff {BASE_BRANCH}...HEAD`，与基准对比；如发现差异（dev 在测试期间改了代码），**立即 SendMessage 给 team-lead 暂停**，不要写最终结论。team-lead 决定是从头重测还是仅做增量回归
+3. **写最终结论前**：再次执行 `git diff {BASE_BRANCH}...HEAD`，与基准对比；如发现差异（代码在测试期间被改动），**立即 SendMessage 给 team-lead 暂停**，不要写最终结论。team-lead 决定是从头重测还是仅做增量回归
 4. 报告中所有『已删除』『已修改』『未覆盖』等断言必须配上具体文件:行号引用"
 )
 ```
@@ -419,7 +412,7 @@ Agent(
 读取 `.claude/workspace/test_report.md`
 
 **IF 收到 tester 的「代码视图漂移」上报（测试期间代码被改动）**：
-1. 核实 dev 是否违反冻结纪律，结论记入 findings.md
+1. 核实改动来源（此时团队内无存活的可改码成员——排查是否用户手工改动或外部进程所为），结论记入 findings.md
 2. 漂移涉及被测模块 → 本轮作废，从头重测（轮次不变，重新 4.1）
 3. 仅涉及无关文件 → 指示 tester 增量回归后继续
 
@@ -439,26 +432,20 @@ SendMessage(to: "tester", message: {"type": "shutdown_request"})
 
   **IF 当前测试轮次 = 3（已是最后一轮）→ 不再召回 dev，直接转「超限暂停」分支。**
 
-  **分支 1：dev 已存活（`START_PHASE in [analyst, tech-lead, dev]`）：**
-  ```
-  SendMessage(
-    to: "dev",
-    message: "修复模式：测试第 {N} 轮未通过。请读取 test_report.md 中的 Bug 清单进行修复。修复后重新执行 code-simplifier。**仅修复指定 Bug，不要借机做其他改动**；完成后通知 team lead 并立即返回待命，代码冻结纪律继续生效。"
-  )
-  ```
-
-  **分支 2：dev 未存活（`START_PHASE = tester`，本任务中首次启动 dev）：**
+  启动 dev 修复（统一路径：dev 不跨阶段存活，每次修复都是模式 B 新实例；前置：若本任务已有过 dev 实例，确认其已 shutdown_approved）：
   ```
   Agent(
     name: "dev",
     team_name: "dev-team-{简短描述}",
     model: sonnet,
-    prompt: {模式 B — 清单驱动模式 prompt}  # 见"dev 启动 prompt 模板"节
+    prompt: {模式 B — 清单驱动模式 prompt，报告指向 test_report.md}  # 见"dev 启动 prompt 模板"节
   )
   ```
-  启动后立即把 test_report.md 的位置告知 dev（prompt 中已含读取指引）。
 
-  → 等待 dev 修复完成
+  → 等待 dev 修复完成（含提交）→ 立即关闭 dev（等待 shutdown_approved）：
+  ```
+  SendMessage(to: "dev", message: {"type": "shutdown_request"})
+  ```
   → 当前测试轮次 += 1
   → IF 当前测试轮次 ≤ 3 → 回到 4.1 启动新的 tester 实例（前置：确认前一轮 tester 已 shutdown_approved）；ELSE → 转「超限暂停」
 
@@ -467,17 +454,18 @@ SendMessage(to: "tester", message: {"type": "shutdown_request"})
     1) 追加 1 轮（轮次上限 +1 后继续，含召回 dev 修复）
     2) 接受当前状态进入下一 Phase（风险自担，记录 findings.md）
     3) 终止流程（走异常终止路径，见终止条件表）
-  暂停期间 dev 保持冻结待命；超限暂停路径下 Phase4 任务保持 in_progress，待人工选择后再定（TaskUpdate 仅在 ✅ 通过的 BREAK 路径执行）。
+  暂停期间无存活成员待命（人工选追加轮次时 dev 按需重启）。人工选择后的任务状态归属：选 1 → Phase4 保持 in_progress 继续循环；选 2 → TaskUpdate(taskId: "Phase4", status: "completed") 并在 findings.md 记「测试超限接受，风险自担」后进入 Phase 5；选 3 → 保持 in_progress，走异常终止路径。
 
 ---
 
 ## Phase 5: 代码审查（不可跳过）
 
-> **起首守卫**：无（reviewer 是 --from 支持的最后一个起始 phase）。但 `START_PHASE = reviewer` 时本 phase 内的 dev 召回与 tester 回归走"按需首次启动"分支，见 §6.1 表与本 phase 5.4 的"召回 dev"步骤。
+> **起首守卫**：无（reviewer 是 --from 支持的最后一个起始 phase）。本 phase 内的 dev 召回一律按需新实例（模式 B，见 5.4.1），tester 回归按 5.4.2 启动。
 
 ```
 当前审查轮次 = 1
 最大轮次 = 3
+每轮回归重试上限 = 1（见 5.4.2，防回归子循环无界）
 ```
 
 ### 5.0 数据变更探测（决定是否启用 data-expert，每轮进入 5.1 前执行）
@@ -491,7 +479,7 @@ SendMessage(to: "tester", message: {"type": "shutdown_request"})
 git diff {BASE_BRANCH}...HEAD --name-only | grep -E '(migration|flyway|liquibase|\.sql$|/entity/|Mapper\.xml$|Entity\.java$)' 
 ```
 
-- `DATA_CHANGE = true` → 从命中轮起每轮启动 data-expert（启动时机见 5.1：reviewer 优化阶段完成后启动，与其只读审查阶段并行）
+- `DATA_CHANGE = true` → 从命中轮起每轮启动 data-expert（与 reviewer 并行启动，见 5.1）
 - `DATA_CHANGE = false` → 本轮不启动 data-expert，5.1–5.4 仅按 reviewer 单角色走
 - **逐轮升级规则**：探测只允许 false→true 升级——后续轮命中（如 dev 修复引入迁移/Entity 改动）则从该轮起启用 data-expert；一旦为 true 则后续轮保持 true，不做降级
 
@@ -501,19 +489,19 @@ git diff {BASE_BRANCH}...HEAD --name-only | grep -E '(migration|flyway|liquibase
 
 **WHILE 当前审查轮次 ≤ 3:**
 
-#### 5.1 启动 reviewer 成员（DATA_CHANGE=true 时串行接力启动 data-expert）
+#### 5.1 启动 reviewer 成员（DATA_CHANGE=true 时与 data-expert 并行启动）
 
-先启动 reviewer：
+启动 reviewer：
 ```
 Agent(
   name: "reviewer",
   team_name: "dev-team-{简短描述}",
   model: sonnet,
-  prompt: "你是开发团队的代码审核员。执行 /reviewer 技能{当前轮次 > 1 ? '（第 {N} 轮复审）' : ''}。审查当前代码变更。完成 Step 1.3 后先 SendMessage 通知 team lead『优化阶段完成』再继续 Step 2。完成后通知 team lead。"
+  prompt: "你是开发团队的代码审核员。执行 /reviewer 技能{当前轮次 > 1 ? '（第 {N} 轮复审）' : ''}。审查当前代码变更（纯只读，不修改任何代码）。完成后通知 team lead。"
 )
 ```
 
-**IF `DATA_CHANGE = true`（5.0 探测命中）→ 收到 reviewer「优化阶段完成」（Step 1.3 完成）通知后再启动 data-expert**（reviewer 优化阶段会实际改码，串行启动避免 data-expert 审查视图漂移；reviewer 的只读审查阶段 Step 2–4 与 data-expert 并行，互不阻塞）：
+**IF `DATA_CHANGE = true`（5.0 探测命中）→ 同时并行启动 data-expert**（reviewer 与 data-expert 均为纯只读审查，无视图漂移风险，互不阻塞）：
 ```
 Agent(
   name: "data-expert",
@@ -543,11 +531,10 @@ SendMessage(to: "data-expert", message: {"type": "shutdown_request"})
 > 合并规则：**两者任一 BLOCK → 本轮 BLOCK**；两者都 APPROVE（或 data-expert 未启用且 reviewer APPROVE）→ APPROVE。dev 修复时合并两份报告的问题清单一次性处理。
 
 **IF 结论 = APPROVE：**
-  → IF dev 本任务中已启动且存活 → 关闭 dev（任务全部完成）：
-  ```
-  SendMessage(to: "dev", message: {"type": "shutdown_request"})
-  ```
-  ELSE（dev 从未启动，如 --from=reviewer 一次 APPROVE 或 --from=tester 全程无 BLOCK）→ 跳过关闭步骤
+  → **IF review_report.md 含「遗留必修项」**（坏味道严重档单独出现时的 APPROVE with mandatory-fix，见 reviewer 判定标准）→ **暂停询问用户**：
+    1) 立即处理：按 5.4.1 启动 dev 修复遗留项 + 5.4.2 tester 回归（不占审查轮次、不再起 reviewer 复审——遗留项本就是 APPROVE 档；回归未通过时按 5.4.2 重试上限处理）。**回归通过后必须按 findings.md 条目格式记「遗留必修项已修复并回归通过（HI-xxx 清单）」**——6.0/6.2 引用遗留必修项时以此记录为准
+    2) 接受遗留：转后续任务处理，记入 findings.md，Phase 6.2 汇总报告列出
+  → 无需关闭 dev（dev 不跨阶段存活，此时无存活实例）
   → TaskUpdate(taskId: "Phase5", status: "completed")
   → BREAK，进入 Phase 6
 
@@ -557,26 +544,20 @@ SendMessage(to: "data-expert", message: {"type": "shutdown_request"})
 
   ### 5.4.1 召回 dev 修复
 
-  **分支 1：dev 已存活（`START_PHASE in [analyst, tech-lead, dev, tester]`）：**
-  > 说明：`START_PHASE = tester` 时若 Phase 4 触发过 BLOCK，已经在 Phase 4.4 的分支 2 中首次启动过 dev；这里 dev 仍存活。
-  ```
-  SendMessage(
-    to: "dev",
-    message: "修复模式：代码审查第 {N} 轮 BLOCK。请读取 review_report.md 中的问题清单进行修复（若本轮启用了 data-expert，**一并读取 data_review.md 的数据层问题清单**，含迁移回滚/索引/一致性）。修复后重新执行 code-simplifier。**仅修复指定问题，不要借机做其他改动**；完成后通知 team lead 并立即返回待命，代码冻结纪律继续生效。"
-  )
-  ```
-
-  **分支 2：dev 未存活（`START_PHASE = reviewer` 且 Phase 4 未启动 dev，即本任务中首次启动 dev）：**
+  启动 dev 修复（统一路径：dev 不跨阶段存活，每次修复都是模式 B 新实例；前置：若本任务已有过 dev 实例，确认其已 shutdown_approved）：
   ```
   Agent(
     name: "dev",
     team_name: "dev-team-{简短描述}",
     model: sonnet,
-    prompt: {模式 B — 清单驱动模式 prompt}  # 见"dev 启动 prompt 模板"节
+    prompt: {模式 B — 清单驱动模式 prompt，报告指向 review_report.md（本轮启用 data-expert 时一并指向 data_review.md）}  # 见"dev 启动 prompt 模板"节
   )
   ```
 
-  → 等待 dev 修复完成
+  → 等待 dev 修复完成（含提交）→ 立即关闭 dev（等待 shutdown_approved）：
+  ```
+  SendMessage(to: "dev", message: {"type": "shutdown_request"})
+  ```
 
   ### 5.4.2 修复后必须经过 tester 回归（防止修复引入新 bug）
 
@@ -599,8 +580,8 @@ SendMessage(to: "data-expert", message: {"type": "shutdown_request"})
   ```
   SendMessage(to: "tester", message: {"type": "shutdown_request"})
   ```
-  → **回归结论判定：**
-    - **IF ❌ 未通过**（修复引入新问题）→ 再次召回 dev，仅修复回归报告新增问题 → 重新执行本步（重启 tester 回归）。该子循环计入当前审查轮次的消耗，累计仍受 3 轮上限约束，超限转「超限暂停」
+  → **回归结论判定**（每个审查轮次进入本步时 `回归重试计数 = 0`）：
+    - **IF ❌ 未通过**（修复引入新问题）→ `回归重试计数 += 1`；IF 回归重试计数 > 1（同一审查轮内第二次回归仍未通过）→ 转「超限暂停」；ELSE 再次按需启动 dev（模式 B 新实例，仅修复回归报告新增问题，完成即关）→ 重新执行本步（重启 tester 回归）
     - **IF ✅ 通过** → 继续
 
   → 当前审查轮次 += 1
@@ -611,16 +592,68 @@ SendMessage(to: "data-expert", message: {"type": "shutdown_request"})
     1) 追加 1 轮（轮次上限 +1 后继续，含召回 dev 修复）
     2) 接受当前状态进入下一 Phase（风险自担，记录 findings.md）
     3) 终止流程（走异常终止路径，见终止条件表）
-  暂停期间 dev 保持冻结待命；超限暂停路径下 Phase5 任务保持 in_progress，待人工选择后再定（TaskUpdate 仅在 APPROVE 的 BREAK 路径执行）。
+  暂停期间无存活成员待命（人工选追加轮次时 dev 按需重启）。人工选择后的任务状态归属：选 1 → Phase5 保持 in_progress 继续循环；选 2 → TaskUpdate(taskId: "Phase5", status: "completed") 并在 findings.md 记「审查超限接受，风险自担」后进入 Phase 6；选 3 → 保持 in_progress，走异常终止路径。
 
 ---
 
 ## Phase 6: 收尾归档
 
+### 6.0 上线就绪核对（归档前执行，产出上线工单）
+
+> 本步是**汇总核对**——消费既有产物、逐项核对卡点，不做新的代码审查（不违反纪律 6"不替代角色执行"）。核对**不拦截流程**：所有结论进工单交用户决策。
+
+**1. 收集证据**（按存在性读取，缺失的在工单「证据」列标注「无产物」）：
+- `data_review.md` → 迁移回滚 / 在线 DDL / 数据一致性结论
+- `review_report.md` → 安全章节、遗留必修项、可观测性落地核对（遗留必修项须与 findings.md 的「遗留必修项已修复并回归通过」记录交叉核对：已处理的在工单标注「已在 Phase 5 处理」，不再列为遗留风险）
+- `test_report.md` → 测试结论、覆盖统计（含「集成测试缺失基建」标注）
+- `architecture.md` → 开放问题、灰度与回滚预案、数据模型变更
+- `findings.md` → 「测试/审查超限接受」等风险记录
+
+**2. 确定卡点来源**（按优先级取第一个可用项，工单「卡点来源」注明用了哪级）：
+1. release-checklist 技能可用（出现在可用技能列表且 Skill 工具可实际调用；调用被拦截即视为不可用，落到下一级）→ 执行 `/release-checklist`，把第 1 步证据作为输入，由其读取项目根 `release-checklist.yaml` 逐卡点核对并生成上线工单
+2. 技能不可用但项目根存在 `release-checklist.yaml` → team 按该文件的卡点逐项核对
+3. 两者皆无 → 按内置通用卡点清单核对：
+   - **数据库**：迁移有回滚方案、上线执行顺序明确（先 DDL 后代码或兼容发布）
+   - **配置**：新增配置项各环境值就位；功能/灰度开关及默认值
+   - **依赖**：上下游 RPC 接口版本兼容；MQ topic/消费组就绪
+   - **可观测**：关键路径日志/监控/告警已落地
+   - **预案**：灰度计划、回滚步骤（代码 + 数据）、值班安排
+   - **遗留风险**：遗留必修项、超限接受记录、architecture 开放问题
+
+**3. 三档结论**（每个卡点必须落一档；✅ 必须附证据出处）：
+- ✅ 已核实（证据：{文件:行号 或 章节}）
+- ⚠️ 需人工确认（agent 无法核实的事项：运维审批、配置中心实值、外部依赖方通知等）
+- ❌ 未通过（有证据表明缺失，注明缺口）
+
+**4. 产出 `.claude/workspace/release_checklist.md`**（走来源 1 时把 /release-checklist 的工单保存/复制到该路径，保证归档路径一致）：
+```markdown
+# 上线清单 - {需求名称}
+
+## 基本信息
+| 分支 | 日期 | 涉及服务/模块 | 卡点来源 |
+|------|------|--------------|---------|
+| {分支} | {YYYY-MM-DD} | {模块清单} | /release-checklist / release-checklist.yaml / 内置通用清单 |
+
+## 卡点核对
+| 卡点 | 状态 | 证据 / 待办 |
+|------|------|-------------|
+| {卡点} | ✅/⚠️/❌ | {文件:行号 或 待办事项} |
+
+## 建议上线步骤
+1. {按依赖顺序：迁移 → 配置 → 部署 → 开关}
+
+## 回滚预案
+- 代码回滚：{方式}
+- 数据回滚：{引用 data_review.md 回滚结论，无数据变更则写"不涉及"}
+
+## 遗留风险
+- {遗留必修项 / 超限接受 / 开放问题，逐条列出}
+```
+
 ### 6.1 验证所有成员已正常关闭
 
-按**本任务中实际启动过的成员**清单逐一确认收到 `shutdown_approved`（系统通知 "X has shut down"）。受 START_PHASE 与按需启动影响，未启动过的角色直接跳过，不计孤儿候选。全量流程下为：
-- analyst / tech-lead / dev / tester（最后一轮）/ reviewer（最后一轮）
+按**本任务中实际启动过的成员实例**清单逐一确认收到 `shutdown_approved`（系统通知 "X has shut down"）。受 START_PHASE 与按需启动影响，未启动过的角色直接跳过，不计孤儿候选。全量流程下为：
+- analyst / tech-lead（含 Phase 3 按需纠偏实例）/ dev（含 Phase 4/5 按需修复实例）/ tester（最后一轮）/ reviewer（最后一轮）
 - IF `DATA_CHANGE = true`：data-expert（最后一轮）也必须确认已 shutdown_approved
 
 如有成员仅 idle 但未发回 shutdown_approved（例如成员在 shutdown_request 到达前已 idle 完最后一轮工作）：
@@ -643,9 +676,13 @@ SendMessage(to: "data-expert", message: {"type": "shutdown_request"})
 - 审查轮次: {N} 轮
 - 发现 Bug 数: {N}，已修复: {N}
 - 审查问题数: {N}，已修复: {N}
+- 遗留必修项: {N} 项（用户已选「接受遗留」，清单见 review_report.md「遗留必修项」）/ 已在 Phase 5 立即处理（回归通过，见 findings.md 记录）/ 无
 
 ### 产出文件
-- task_plan.md / architecture.md / test_report.md / review_report.md{DATA_CHANGE ? ' / data_review.md' : ''}
+- task_plan.md / architecture.md / test_report.md / review_report.md{DATA_CHANGE ? ' / data_review.md' : ''} / release_checklist.md
+
+### 上线就绪
+- 卡点核对: ✅ {N} / ⚠️ 需人工确认 {N} / ❌ 未通过 {N}（工单见 release_checklist.md）
 ```
 
 ### 6.3 条件触发 CLAUDE.md 更新
@@ -686,10 +723,12 @@ mv .claude/workspace/review_report.md .claude/workspace/archive/{目录}/ 2>/dev
 mv .claude/workspace/findings.md .claude/workspace/archive/{目录}/ 2>/dev/null || true
 # IF DATA_CHANGE=true（data_review.md 存在时）：
 mv .claude/workspace/data_review.md .claude/workspace/archive/{目录}/ 2>/dev/null || true
+mv .claude/workspace/release_checklist.md .claude/workspace/archive/{目录}/ 2>/dev/null || true
 ```
 
 ### 6.7 最终提示
 - feature 分支已就绪
+- 上线工单：`archive/{目录}/release_checklist.md`；**存在 ❌ 未通过或 ⚠️ 需人工确认卡点时在此逐条列出**，提醒用户上线前处理
 - 是否需要合并到目标分支或创建 PR
 
 TaskUpdate(taskId: "Phase6", status: "completed")
@@ -698,7 +737,7 @@ TaskUpdate(taskId: "Phase6", status: "completed")
 
 # `/dev` 与本 skill 的关系（重要澄清）
 
-`/dev` 触发的是本插件的独立 dev skill（`skills/dev/SKILL.md`，单 dev 编码 + code-simplifier + 编译闭环），不创建团队、不含 tester/reviewer 闭环，**不等同于"精简版的 /team"**。
+`/dev` 触发的是本插件的独立 dev skill（`skills/dev/SKILL.md`，单 dev 编码 + /simplify + code-simplifier + 编译闭环），不创建团队、不含 tester/reviewer 闭环，**不等同于"精简版的 /team"**。
 
 ## 如何选择入口
 
@@ -709,7 +748,7 @@ TaskUpdate(taskId: "Phase6", status: "completed")
 | 已有需求 + 架构（task_plan.md + architecture.md）→ 从编码开始，**保留** 测试/审查闭环 | `/team --from=dev [<需求补充>]` |
 | 已有代码 → 跑测试+审查闭环 | `/team --from=tester [<需求补充>]` |
 | 已有代码 → 只做一次代码审查（含 P0 安全审查） | `/team --from=reviewer [<需求补充>]` |
-| 单 dev 直接编码（自行写简版 architecture.md + 自建 feature 分支 + 完成后 code-simplifier）**不含**测试/审查闭环 | `/dev <需求>` |
+| 单 dev 直接编码（自行写简版 architecture.md + 自建 feature 分支 + 完成后 /simplify + code-simplifier）**不含**测试/审查闭环 | `/dev <需求>` |
 
 > `/team --from=dev` ≠ `/dev`：前者**含** Phase 4/5 闭环，后者**不含**。
 
@@ -722,7 +761,7 @@ TaskUpdate(taskId: "Phase6", status: "completed")
 | 场景 | 处理方式 |
 |------|---------|
 | 任何阶段遇到不可解决的问题 | 暂停，展示 findings.md，请求人工介入 |
-| **异常终止/人工中断** | 关闭所有存活成员 → TeamDelete 清理 → 报告 workspace 当前状态（已生成产物清单 + 可用的 --from 复活入口） |
+| **异常终止/人工中断** | 关闭所有存活成员（等待 shutdown_approved，超时按孤儿候选处理）→ TeamDelete 清理 → **孤儿进程检查（同 6.5，不可省略）** → 报告 workspace 当前状态（已生成产物清单 + 可用的 --from 复活入口） |
 
 # 纪律
 
@@ -732,11 +771,12 @@ TaskUpdate(taskId: "Phase6", status: "completed")
 4. **成员完成任务后必须 shutdown 并等待 shutdown_approved** — 协议细节见「关闭成员」节
 5. **流程结束必须 TeamDelete + 孤儿进程检查** — TeamDelete 不 kill 进程，必须执行 Phase 6.5
 6. **不替代角色执行** — 编排指挥官只调度，不直接编码/测试/审查
-7. **dev 在 Phase 4/5 待命期间禁止主动改代码** — 即使发现新 bug 也只能 SendMessage 报告，由 team-lead 决定何时召回修复（避免让 tester/reviewer 报告基于过期代码视图）
-8. **tester 提交报告前必须 verify 代码视图未变** — 通过 git diff 与测试基准对比；如发现 dev 在测试期间改了代码，立即暂停而非继续写结论
+7. **纠偏与修复一律按需新实例、完成即关** — tech-lead 纠偏、dev 修复每次都是 Agent() 新实例（纠偏模式/清单驱动模式），任务完成立即 shutdown；不留跨阶段待命成员，测试/审查期间团队内没有任何可改码的存活成员。例外：analyst（1.2）/ tech-lead（2.2）在等待用户确认并按答复更新自身产物期间的**同阶段**短暂存活，不属于跨阶段待命
+8. **tester 提交报告前必须 verify 代码视图未变** — 通过 git diff 与测试基准对比；如发现测试期间代码被改动（用户手工改动/外部进程），立即暂停而非继续写结论
 9. **启动同名新一轮成员前必须等前一轮 shutdown_approved** — 否则系统自动加 `-2`/`-3` 后缀导致 SendMessage 定位错误（见「启动成员」节；孤儿候选场景除外，见「关闭成员」节）
 10. **--from=X 等于声明 X 之前的角色不主动启动** — 详见 §6.1 表（dev → 清单驱动模式；tech-lead → 纠偏模式）；禁止"--from=X 就完全禁用 X 之前的角色"的简化理解，会破坏闭环可达性
 11. **--from in [dev, tester, reviewer] 时沿用当前分支** — 不新建 feature 分支；启动时打印当前分支供用户确认
 12. **--from=X 的前置校验失败必须立即报错暂停** — 报错模板见 Phase 0.1，禁止静默回退到上游 phase 补生成
 13. **Phase 6 归档/孤儿检查无论起步 phase 如何都必须执行** — 包括 --from=reviewer 一次 APPROVE 的最短路径
-14. **data-expert 条件触发、与 reviewer 同档阻断** — 逐轮探测与串行接力启动时机见 Phase 5.0/5.1，结论合并规则（任一 BLOCK 即本轮 BLOCK）见 5.4
+14. **data-expert 条件触发、与 reviewer 同档阻断** — 逐轮探测见 Phase 5.0，与 reviewer 并行启动见 5.1，结论合并规则（任一 BLOCK 即本轮 BLOCK）见 5.4
+15. **上线就绪核对（6.0）只出工单不拦截** — ✅ 必须附证据出处（文件:行号/章节），❌/⚠️ 卡点在 6.7 逐条列出交用户决策；不触发修复闭环，上线决策属于人

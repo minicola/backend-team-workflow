@@ -61,7 +61,7 @@ argument-hint: <PRD文件路径或需求描述>
 - Agent 2: 接口层扫描 — 搜索 Controller、RPC 实现、DTO 定义
 - Agent 3: 基础设施层扫描（如涉及数据变更） — 搜索 Entity、Mapper、Repository
 
-将所有调研发现写入 `.claude/workspace/findings.md`，明确记录：
+将所有调研发现写入 `.claude/workspace/findings.md`（按文件头声明的条目格式追加；独立运行且文件不存在时，先写入 `# Findings` 及条目格式头 `## [角色][Phase N] 标题（YYYY-MM-DD）`），明确记录：
 - 可复用的现有能力
 - 需新增的能力
 - 可能的冲突点

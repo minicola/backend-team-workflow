@@ -1,10 +1,10 @@
 {
   "name": "backend-team-workflow",
-  "description": "后端团队工作流：以 team 为总入口，串联 analyst / tech-lead / dev / tester / reviewer 五角色 + 条件触发的 data-expert 数据治理审查员，覆盖需求 → 设计 → 开发 → 测试 → 审查（含数据层）全流程",
-  "version": "0.2.0",
+  "description": "Java 后端团队工作流（Spring/COLA 生态预设，可被目标项目 CLAUDE.md 覆盖）：以 team 为总入口，串联 analyst / tech-lead / dev / tester / reviewer 五角色 + 条件触发的 data-expert 数据治理审查员，覆盖需求 → 设计 → 开发 → 测试 → 审查（含数据层）全流程",
+  "version": "0.3.0",
   "author": {
     "name": "冯宇翔",
     "email": "yuxiangflll@gmail.com"
   },
-  "keywords": ["team", "workflow", "backend", "agent-team", "code-review"]
+  "keywords": ["team", "workflow", "backend", "java", "spring", "agent-team", "code-review"]
 }
