@@ -1,6 +1,6 @@
 ---
 name: team
-description: 团队编排 - 以 Claude Agent Team 团队协作模式串联需求分析、技术设计、开发、测试、审查全流程。通过 TeamCreate 创建团队，使用共享任务列表驱动协作，成员完成任务后正式关闭释放资源。支持 --from=<phase> 从 analyst/tech-lead/dev/tester/reviewer 任意节点切入，强制质量闭环。
+description: 团队编排 - 以 Claude Agent Team 团队协作模式串联需求分析、技术设计、开发、测试、审查全流程。按阶段启动 teammate 并在任务完成后正式关闭释放资源，进度通过 findings.md 进度表跟踪。支持 --from=<phase> 从 analyst/tech-lead/dev/tester/reviewer 任意节点切入，强制质量闭环。
 user-invocable: true
 disable-model-invocation: true
 argument-hint: "[--from=<phase>] [<需求描述或PRD路径>]（--from=analyst 或缺省时必填）"
@@ -53,7 +53,24 @@ argument-hint: "[--from=<phase>] [<需求描述或PRD路径>]（--from=analyst �
 # 成员生命周期管理
 
 ## 启动成员
-每个成员通过 Agent 工具启动加入团队，具体调用见各 Phase 的字面示例。
+每个成员通过 Agent 工具启动，**带 `name` 参数即自动作为 teammate 加入本会话的隐式团队**（不传 `team_name`——该参数已废弃且被忽略）。具体调用见各 Phase 的字面示例。
+
+**teammate 与 subagent 的语义差异（直接影响本流程的编排）**：teammate 完成工作后只发出 idle 通知，**该通知不携带任何产出内容**。因此 team lead 判定某阶段是否完成，**一律以产物文件落盘为准**，idle 通知仅作为「可以去读文件了」的触发信号。禁止编写「等待成员把结果回传给我」的等待逻辑——那是 subagent 语义，在 teammate 下会永久阻塞。
+
+## 阶段完成判定协议 `AWAIT(成员, 判据)`
+
+各 Phase 的所有「等待 X 完成」一律按本协议执行，**判据是产物、不是通知**：
+
+1. **触发**：收到该成员的 idle 通知（"X is idle"）或其主动 SendMessage 报告 → 进入第 2 步。**不要因为没收到通知就一直空等**——通知只是加速信号，缺失不影响判定。
+2. **验收判据**：读取该成员的产物文件，同时满足两条才算完成：
+   - 文件存在且非空
+   - 内容完整——具备该产物的**结论性章节**（判据见各 Phase 的 `AWAIT` 标注），而非写到一半的半截文件
+3. **未达标处理**：产物缺失或不完整 →
+   - 成员**仍在运行**（未 idle）→ 正常等待，回到第 1 步
+   - 成员**已 idle 但产物不达标** → 说明它提前收工或出错（teammate 遇错可能直接停止）。`SendMessage` 告知具体缺口并要求补齐，重新进入判定；同一成员**连续 2 次补齐仍不达标 → 暂停请求人工**，不要无限循环
+4. **超时兜底**：单个成员自启动起累计 **15 分钟**仍未达标 → `SendMessage` 询问进度；再等一个周期仍无进展 → 记入 findings.md 并暂停请求人工
+
+> 一次 `AWAIT` 只针对一个成员。Phase 5 中 reviewer 与 data-expert 并行时，分别 `AWAIT`，两者都达标才进入下一步（顺序不限，先到先读）。
 
 **技能加载方式（官方文档确认的行为，非兜底）**：本插件 7 个角色 skill 均为 `disable-model-invocation: true`——skill 描述不会进入队员上下文、Skill 工具无法调用、也不会 preload 进 subagent，因此队员**必然无法**通过 /X 加载。各 Phase 的 Agent() prompt 中『执行 /X 技能』字样，发送前一律替换为：
 
@@ -61,7 +78,7 @@ argument-hint: "[--from=<phase>] [<需求描述或PRD路径>]（--from=analyst �
 
 （`${CLAUDE_PLUGIN_ROOT}` 在本 skill 加载时已解析为插件安装绝对路径，直接拼接使用。）该替换仅适用于本插件的 7 个角色 skill；/simplify、code-simplifier、ralph-loop 等外部技能不受此限制，可用性按各角色 SKILL 声明的降级路径处理。
 
-**启动同名新一轮成员前必须确认前一轮已收到 `shutdown_approved`**（系统通知 "X has shut down"）。否则系统会自动加 `-2`/`-3` 后缀，导致后续 SendMessage 定位错误。
+**启动同名新一轮成员前必须确认前一轮已收到 `shutdown_approved`**（系统通知 "X has shut down"）。否则同名冲突的系统行为（latest-wins 抢占或自动加 `-2`/`-3` 后缀，随版本而异）都会造成成员定位混乱——旧实例可能仍在消耗 token 却无人管理。
 
 ## 关闭成员（shutdown 协议，不可省略任何一步）
 
@@ -74,20 +91,27 @@ SendMessage(
 
 1. **发送 shutdown_request 后必须等待 `shutdown_approved` 响应**（系统通知 "X has shut down"）
 2. 收到 shutdown_approved 才算真正关闭，可以推进流程
-3. 等待超过 60 秒未响应 → 标记为**孤儿进程候选**，记录到 findings.md，流程结束时统一检查
-4. **孤儿脱困**：成员被标记孤儿候选后，不再等待其 shutdown_approved；下一轮同名启动接受系统自动改名（如 `tester-2`），新名字记入 findings.md 并在后续 SendMessage 中一律使用；自动改名不可用则暂停请求人工
+3. **shutdown 可能很慢**：teammate 会先做完当前请求或工具调用才响应关闭，等待属正常。等待超过 60 秒未响应 → 标记为**孤儿候选**，记录到 findings.md，并立即执行下一条的强制回收
+4. **强制回收（孤儿候选的唯一正解）**：对超时未响应的成员调用
 
-**规则**：成员完成当前阶段任务后，**team 必须立即向其发送 shutdown_request**；下一步动作（如启动新轮成员、TeamDelete）必须在 shutdown_approved 之后执行。
+   ```
+   TaskStop(task_id: "{角色name}")
+   ```
 
-## 清理团队
+   `TaskStop` 接受 teammate 的 bare name 或 `name@team` 形式的 agent ID。回收结果（成功/失败）记入 findings.md。**只有 TaskStop 能真正终止一个 teammate**——它是 in-process 运行的，`kill <PID>` 无从下手（见 6.5）。
+5. **孤儿脱困**：成员被标记孤儿候选且 TaskStop 回收失败后，不再等待其 shutdown_approved；下一轮直接同名启动。同名冲突的系统行为按实际观察适配（不同版本二选一）：
+   - **latest-wins（当前版本默认）**：名字指向最新实例，后续 SendMessage / TaskStop 用原名即可，旧实例改用其 spawn 结果中的 agentId 定位
+   - **自动改名**（如 `tester-2`）：新名字记入 findings.md 并在后续 SendMessage / TaskStop 中一律使用
 
-**前置条件**：所有成员已收到 `shutdown_approved`。如有未响应成员，先记录为孤儿候选再 TeamDelete。
+   无论哪种，把「旧实例标识 + 新实例标识」都记入 findings.md，供 6.5 回收核对逐一处理；两种行为都未出现（启动被拒）则暂停请求人工
 
-```
-TeamDelete()
-```
+**规则**：成员完成当前阶段任务后，**team 必须立即向其发送 shutdown_request**；下一步动作（如启动新轮成员、进入 Phase 6）必须在 shutdown_approved 或 TaskStop 回收之后执行。
 
-**TeamDelete 仅清理 config + 任务列表，不会 kill 成员进程**。Phase 6 必须执行孤儿进程检查（见 6.5）。
+## 清理团队（自动，无需调用工具）
+
+**不要调用 `TeamDelete`——该工具自 Claude Code v2.1.178 起已不存在。** 团队目录（`~/.claude/teams/{team-name}/`）在会话结束时由 Claude Code 自动清理，任务目录（`~/.claude/tasks/{team-name}/`）按 `cleanupPeriodDays` 保留供会话恢复。
+
+**但自动清理只回收目录，不代表成员已停止**：会话仍在进行时，未 shutdown 的 teammate 会继续存活并消耗 token。因此 Phase 6 仍必须执行成员回收核对（见 6.5）——那一步的目标是**确认每个启动过的成员都已停止**，而不是删除任何文件。
 
 ## dev 启动 prompt 模板（两种模式）
 
@@ -147,7 +171,7 @@ dev 的 Agent() 启动 prompt 分两种模式。dev 不跨阶段存活：Phase 3
 
 探测基准分支 `BASE_BRANCH`：`git rev-parse --verify main` 成功则取 `main`，否则取 `master`。此后所有 diff 基准统一使用 `{BASE_BRANCH}...HEAD`。
 
-`简短描述` 派生规则（需求文本可空的 --from 路径下也必须有稳定取值），按优先级取第一个可用项：需求文本前 8-12 字摘要 > task_plan.md 标题（如存在）> 当前分支名去前缀（fyx/feature/20260522_xxx → xxx）> git diff 主要改动模块名。该值一经确定，0.4 team_name、6.2 汇总报告、6.6 归档目录、6.5 孤儿检查 grep 必须使用同一值。
+`简短描述` 派生规则（需求文本可空的 --from 路径下也必须有稳定取值），按优先级取第一个可用项：需求文本前 8-12 字摘要 > task_plan.md 标题（如存在）> 当前分支名去前缀（fyx/feature/20260522_xxx → xxx）> git diff 主要改动模块名。该值一经确定，6.2 汇总报告与 6.6 归档目录必须使用同一值。（它**不再用于团队标识**——团队名由会话 ID 派生且不可指定，见 0.4。）
 
 ### 0.1 前置校验
 按 START_PHASE 跑对应检查（任一失败立即报错退出）：
@@ -173,7 +197,32 @@ dev 的 Agent() 启动 prompt 分两种模式。dev 不跨阶段存活：Phase 3
   4) 从历史归档复活: ls .claude/workspace/archive/
 ```
 
-**基线提交（--from=tester/reviewer）**：校验通过后，若 working tree 有未提交改动 → 经用户确认后创建基线提交：`git add -A ':(exclude).claude/workspace'` + `git commit -m "chore: review baseline"`（使 tester 的基准 diff 有稳定起点、reviewer 审查范围可界定）。
+### 0.1b 运行环境门禁（启动任何成员前必须通过）
+
+> 排序理由：0.0/0.1 的**用户输入类报错优先**（参数非法、前置缺失应先于环境问题暴露，也保持 evals 场景语义不变）；本门禁在其后、在任何有副作用的操作（基线提交、分支创建、成员启动）之前执行。
+
+本工作流依赖 teammate 的双向通信与 shutdown 协议，**必须确认 Agent Team 已启用**：
+
+```bash
+grep -o 'CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS"[^,}]*' ~/.claude/settings.json 2>/dev/null; echo "env: ${CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS:-<unset>}"
+```
+
+判定为**未启用**（两处均无值或值为 `0`；注意项目级 settings、`--settings` 与托管设置优先级更高，如有冲突以实际生效值为准）→ ❌ 报错退出，**不启动任何成员**：
+
+```
+[❌] Agent Team 未启用，/team 无法运行
+本工作流依赖 teammate 的双向通信（SendMessage）与 shutdown 协议，
+未启用时 Agent(name: ...) 会退化为普通 subagent：结果直接回传、无法召回、无 idle 通知，
+召回/纠偏/关闭全部失效。
+
+启用方式（~/.claude/settings.json）：
+  { "env": { "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS": "1" } }
+保存后即时生效，无需重启会话。
+```
+
+同时确认当前处于**交互式会话**：`-p` / headless / Agent SDK 会话下不会 spawn teammate（同样退化为 subagent），此时一并按上述模板报错退出。
+
+**基线提交（--from=tester/reviewer，0.1b 通过后执行）**：若 working tree 有未提交改动 → 经用户确认后创建基线提交：`git add -A ':(exclude).claude/workspace'` + `git commit -m "chore: review baseline"`（使 tester 的基准 diff 有稳定起点、reviewer 审查范围可界定）。
 
 ### 0.2 工作空间初始化
 - 确保 `.claude/workspace/` 目录存在（不存在则 mkdir）
@@ -227,26 +276,42 @@ git checkout -b fyx/feature/{YYYYMMDD}_{简短描述}
   ```
 - 用户选 n → 退出，不创建团队
 
-### 0.4 创建团队
-```
-TeamCreate(
-  team_name: "dev-team-{简短描述}",
-  description: "开发任务：{需求简述}（起步 phase: {START_PHASE}）"
-)
+### 0.4 团队（无需创建，隐式存在）
+
+**不要调用 `TeamCreate`——该工具自 Claude Code v2.1.178 起已不存在。** 当前 Agent Team 语义：每个会话自带唯一一个隐式团队，团队名由会话 ID 派生（`session-{sessionId 前 8 位}`），**不可指定**；`Agent(...)` 调用只要带 `name` 参数即自动作为 teammate 加入该团队；会话退出时团队目录自动清理，无需也无法手动删除。
+
+因此本 skill 不再维护自定义团队名。`{简短描述}` 仅用于 6.2 汇总报告与 6.6 归档目录，不参与任何团队标识。
+
+> 前置：teammate 能力依赖 `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1`（settings.json 的 `env` 或环境变量）。未开启时 `Agent(name: ...)` 退化为普通 subagent——结果直接回传、无法用 SendMessage 双向通信、无 idle 通知。此时本流程的召回/纠偏/shutdown 协议全部失效：**Phase 0 探测到未开启即报错退出**，提示用户先开启该变量，不要带病启动。
+
+### 0.5 初始化进度跟踪（写入 findings.md）
+
+`TaskCreate` / `TaskUpdate` / `TaskList` 属于「有 Task 工具的会话」才具备的能力，普通会话不可用，**不得作为流程必需依赖**。统一改为在 `findings.md` 维护一张进度表，由 team lead 自己读写。
+
+Phase 0.2 写入格式头后，紧接着追加进度表骨架；仅列出从 START_PHASE 开始的阶段：
+
+```markdown
+## [team][Phase 0] 进度跟踪（YYYY-MM-DD）
+
+| Phase | 阶段 | 状态 | 负责人 |
+|---|---|---|---|
+| 1 | 需求分析 | pending | analyst |
+| 2 | 技术设计 | pending | tech-lead |
+| 3 | 编码实现 | pending | dev |
+| 4 | 测试验证 | pending | tester |
+| 5 | 代码审查 | pending | reviewer |
+| 6 | 收尾归档 | pending | team |
 ```
 
-### 0.5 初始化进度跟踪（按 START_PHASE 条件 TaskCreate）
-仅创建从 START_PHASE 对应阶段开始的 Phase 任务：
-
-| START_PHASE | 创建的 TaskCreate |
+| START_PHASE | 写入的行 |
 |---|---|
-| `analyst` | Phase 1-6 全部 6 个任务 |
-| `tech-lead` | Phase 2-6 共 5 个任务 |
-| `dev` | Phase 3-6 共 4 个任务 |
-| `tester` | Phase 4-6 共 3 个任务 |
-| `reviewer` | Phase 5-6 共 2 个任务 |
+| `analyst` | Phase 1-6 全部 6 行 |
+| `tech-lead` | Phase 2-6 共 5 行 |
+| `dev` | Phase 3-6 共 4 行 |
+| `tester` | Phase 4-6 共 3 行 |
+| `reviewer` | Phase 5-6 共 2 行 |
 
-每个 TaskCreate 使用与原版相同的 subject/description（Phase 1: 需求分析 / Phase 2: 技术设计 / Phase 3: 编码实现 / Phase 4: 测试验证 / Phase 5: 代码审查 / Phase 6: 收尾归档）。
+状态取值 `pending | in_progress | completed`。后文所有「更新进度」动作均指用 Edit 改写本表对应行的状态列，不调用任何 Task 工具。
 
 ---
 
@@ -256,18 +321,18 @@ TeamCreate(
 
 ### 1.1 启动 analyst 成员
 ```
-TaskUpdate(taskId: "Phase1", status: "in_progress", owner: "analyst")
+更新 findings.md 进度表：Phase 1 → in_progress（负责人 analyst）
 
 Agent(
   name: "analyst",
-  team_name: "dev-team-{简短描述}",
   model: opus,
   prompt: "你是开发团队的需求分析师。执行 /analyst 技能。需求输入：{去除 --from 参数后的需求文本}。完成后将 task_plan.md 写入 .claude/workspace/，然后通知 team lead。"
 )
 ```
 
 ### 1.2 等待 analyst 完成
-收到 analyst 完成通知后：
+
+`AWAIT(analyst, 判据: task_plan.md 存在且含验收标准章节)`。达标后：
 - 读取 `.claude/workspace/task_plan.md`
 - 检查是否有 [待确认] 项
   - 有 → **暂停**，展示给用户确认；用户答复后 SendMessage 给 analyst（仍存活）按答复更新 task_plan.md，确认更新完成后再执行 1.3 关闭
@@ -277,7 +342,7 @@ Agent(
 ```
 SendMessage(to: "analyst", message: {"type": "shutdown_request"})
 ```
-TaskUpdate(taskId: "Phase1", status: "completed")
+更新 findings.md 进度表：Phase 1 → completed
 
 ---
 
@@ -287,18 +352,18 @@ TaskUpdate(taskId: "Phase1", status: "completed")
 
 ### 2.1 启动 tech-lead 成员
 ```
-TaskUpdate(taskId: "Phase2", status: "in_progress", owner: "tech-lead")
+更新 findings.md 进度表：Phase 2 → in_progress（负责人 tech-lead）
 
 Agent(
   name: "tech-lead",
-  team_name: "dev-team-{简短描述}",
   model: opus,
   prompt: "你是开发团队的技术负责人。执行 /tech-lead 技能（方案设计模式）。读取 .claude/workspace/task_plan.md 进行技术方案设计。完成后通知 team lead。"
 )
 ```
 
 ### 2.2 等待 tech-lead 完成方案
-收到完成通知后：
+
+`AWAIT(tech-lead, 判据: architecture.md 存在且含复杂度评分与方案结论)`。达标后：
 - 读取 `.claude/workspace/architecture.md`
 - **IF 多方案对比（标准模式，tech-lead 复杂度评分 > 6）**：展示方案对比摘要给用户 → 用户选择方案 → SendMessage 给 tech-lead（仍存活），由其将 architecture.md 更新为选定方案的详细设计，确认更新完成后继续
 - **IF 单方案（轻量模式，tech-lead 复杂度评分 ≤ 6）**：展示方案摘要 + 免对比理由 + 开放问题，用户确认即继续（无 A/B 选择环节）；用户有异议 → SendMessage 给 tech-lead 按反馈调整，确认后继续
@@ -309,7 +374,7 @@ Agent(
 SendMessage(to: "tech-lead", message: {"type": "shutdown_request"})
 ```
 
-TaskUpdate(taskId: "Phase2", status: "completed")
+更新 findings.md 进度表：Phase 2 → completed
 
 ---
 
@@ -319,11 +384,10 @@ TaskUpdate(taskId: "Phase2", status: "completed")
 
 ### 3.1 启动 dev 成员
 ```
-TaskUpdate(taskId: "Phase3", status: "in_progress", owner: "dev")
+更新 findings.md 进度表：Phase 3 → in_progress（负责人 dev）
 
 Agent(
   name: "dev",
-  team_name: "dev-team-{简短描述}",
   model: sonnet,
   prompt: {模式 A — 编码模式 prompt}  # 见"dev 启动 prompt 模板"节
 )
@@ -343,12 +407,11 @@ dev 报告模块完成时，检查 findings.md。**偏离判定标准（命中�
   ```
   Agent(
     name: "tech-lead",
-    team_name: "dev-team-{简短描述}",
     model: opus,
     prompt: "你是开发团队的技术负责人。执行 /tech-lead 技能（纠偏模式）。dev 在 {模块} 偏离了技术方案，偏离详情：{内容}。读取 .claude/workspace/architecture.md 给出修正指令并追加到 findings.md，完成后通知 team lead。"
   )
   ```
-- tech-lead 返回修正指令 → 转发给 dev：
+- `AWAIT(tech-lead, 判据: findings.md 新增了本次纠偏的修正指令条目)` → 转发给 dev：
   ```
   SendMessage(
     to: "dev",
@@ -362,7 +425,10 @@ dev 报告编译 3 轮未通过：
 - tech-lead 也无法解决 → **暂停**，请求人工介入
 
 ### 3.3 dev 完成编码
-等待 dev 确认：编码完成 + /simplify 与 code-simplifier 已执行 + 编译通过 + 改动已提交（feature 分支内，排除 .claude/workspace）。
+
+`AWAIT(dev, 判据: progress.md 存在且各模块标记完成 AND `git log {BASE_BRANCH}..HEAD` 有 dev 的新提交)`。
+
+**dev 的判据以 git 提交为主**——产物是代码而非报告文件，仅凭 progress.md 不足以确认落盘。达标后核对：编码完成 + /simplify 与 code-simplifier 已执行 + 编译通过 + 改动已提交（feature 分支内，排除 .claude/workspace）；其中「编译通过 / 优化已执行」无法从 git 观测，以 dev 的报告为准，如报告缺失则 SendMessage 追问后再进入 3.4。
 
 ### 3.4 关闭 dev
 编码提交确认后立即关闭（Phase 4/5 闭环若 BLOCK，按需重启新实例进入清单驱动模式，即用即关）：
@@ -370,7 +436,7 @@ dev 报告编译 3 轮未通过：
 SendMessage(to: "dev", message: {"type": "shutdown_request"})
 ```
 
-TaskUpdate(taskId: "Phase3", status: "completed")
+更新 findings.md 进度表：Phase 3 → completed
 
 ---
 
@@ -391,12 +457,11 @@ TaskUpdate(taskId: "Phase3", status: "completed")
 
 #### 4.1 启动 tester 成员
 
-**前置**：如非首轮，确认前一轮 tester 已收到 shutdown_approved（避免 name 冲突自动改名 `tester-2`）。
+**前置**：如非首轮，确认前一轮 tester 已收到 shutdown_approved（避免同名冲突，见纪律 9）。
 
 ```
 Agent(
   name: "tester",
-  team_name: "dev-team-{简短描述}",
   model: sonnet,
   prompt: "你是开发团队的测试工程师。执行 /tester 技能{当前轮次 > 1 ? '（回归测试模式）' : ''}。读取 workspace 中的 task_plan.md、architecture.md 进行测试。完成后通知 team lead。
 
@@ -409,7 +474,10 @@ Agent(
 ```
 
 #### 4.2 等待 tester 完成
-读取 `.claude/workspace/test_report.md`
+
+`AWAIT(tester, 判据: test_report.md 存在且含明确的 ✅/❌ 最终结论 + 「结论前复核」行)`。达标后读取 `.claude/workspace/test_report.md`。
+
+> 「有结论」是硬判据：tester 若中途停止会留下无结论的半截报告，此时按 `AWAIT` 第 3 步要求补齐，**不得**把半截报告当作 ❌ 处理——那会误召 dev 修复不存在的问题。
 
 **IF 收到 tester 的「代码视图漂移」上报（测试期间代码被改动）**：
 1. 核实改动来源（此时团队内无存活的可改码成员——排查是否用户手工改动或外部进程所为），结论记入 findings.md
@@ -425,7 +493,7 @@ SendMessage(to: "tester", message: {"type": "shutdown_request"})
 #### 4.4 判定
 
 **IF 测试结论 = ✅ 通过：**
-  → TaskUpdate(taskId: "Phase4", status: "completed")
+  → 更新 findings.md 进度表：Phase 4 → completed
   → BREAK，进入 Phase 5
 
 **IF 测试结论 = ❌ 未通过：**
@@ -436,13 +504,13 @@ SendMessage(to: "tester", message: {"type": "shutdown_request"})
   ```
   Agent(
     name: "dev",
-    team_name: "dev-team-{简短描述}",
     model: sonnet,
     prompt: {模式 B — 清单驱动模式 prompt，报告指向 test_report.md}  # 见"dev 启动 prompt 模板"节
   )
   ```
 
-  → 等待 dev 修复完成（含提交）→ 立即关闭 dev（等待 shutdown_approved）：
+  → `AWAIT(dev, 判据: `git log {BASE_BRANCH}..HEAD` 出现本轮新提交 AND progress.md 记录了本轮修复项)`
+  → 立即关闭 dev（等待 shutdown_approved）：
   ```
   SendMessage(to: "dev", message: {"type": "shutdown_request"})
   ```
@@ -454,7 +522,7 @@ SendMessage(to: "tester", message: {"type": "shutdown_request"})
     1) 追加 1 轮（轮次上限 +1 后继续，含召回 dev 修复）
     2) 接受当前状态进入下一 Phase（风险自担，记录 findings.md）
     3) 终止流程（走异常终止路径，见终止条件表）
-  暂停期间无存活成员待命（人工选追加轮次时 dev 按需重启）。人工选择后的任务状态归属：选 1 → Phase4 保持 in_progress 继续循环；选 2 → TaskUpdate(taskId: "Phase4", status: "completed") 并在 findings.md 记「测试超限接受，风险自担」后进入 Phase 5；选 3 → 保持 in_progress，走异常终止路径。
+  暂停期间无存活成员待命（人工选追加轮次时 dev 按需重启）。人工选择后的任务状态归属：选 1 → Phase4 保持 in_progress 继续循环；选 2 → 更新 findings.md 进度表：Phase 4 → completed 并在 findings.md 记「测试超限接受，风险自担」后进入 Phase 5；选 3 → 保持 in_progress，走异常终止路径。
 
 ---
 
@@ -495,7 +563,6 @@ git diff {BASE_BRANCH}...HEAD --name-only | grep -E '(migration|flyway|liquibase
 ```
 Agent(
   name: "reviewer",
-  team_name: "dev-team-{简短描述}",
   model: sonnet,
   prompt: "你是开发团队的代码审核员。执行 /reviewer 技能{当前轮次 > 1 ? '（第 {N} 轮复审）' : ''}。审查当前代码变更（纯只读，不修改任何代码）。完成后通知 team lead。"
 )
@@ -505,16 +572,20 @@ Agent(
 ```
 Agent(
   name: "data-expert",
-  team_name: "dev-team-{简短描述}",
   model: sonnet,
   prompt: "你是开发团队的数据治理审查员。执行 /data-expert 技能{当前轮次 > 1 ? '（第 {N} 轮复审）' : ''}。审查本次变更的数据层部分（迁移/表结构/索引/Mapper/分片），产出 data_review.md。完成后通知 team lead。"
 )
 ```
-> 前置（非首轮）：确认前一轮 data-expert 已 shutdown_approved（避免自动改名 `data-expert-2`）。
+> 前置（非首轮）：确认前一轮 data-expert 已 shutdown_approved（避免同名冲突，见纪律 9）。
 
 #### 5.2 等待审查完成
-- 等待 reviewer 完成 → 读取 `.claude/workspace/review_report.md`
-- IF `DATA_CHANGE = true`：再等待 data-expert 完成 → 读取 `.claude/workspace/data_review.md`
+
+两者并行运行，**分别 AWAIT、先到先读**，不要串行空等：
+
+- `AWAIT(reviewer, 判据: review_report.md 存在且含 BLOCK/APPROVE 明确结论)` → 读取 `.claude/workspace/review_report.md`
+- IF `DATA_CHANGE = true`：`AWAIT(data-expert, 判据: data_review.md 存在且含 BLOCK/APPROVE 明确结论)` → 读取 `.claude/workspace/data_review.md`
+
+两份都达标后才进入 5.3；任一未达标时按 `AWAIT` 第 3 步处理该成员，**不影响**另一成员的已达标结论。
 
 #### 5.3 关闭本轮审查成员
 无论结果如何，当轮成员完成后立即关闭（各自等待 shutdown_approved）：
@@ -535,7 +606,7 @@ SendMessage(to: "data-expert", message: {"type": "shutdown_request"})
     1) 立即处理：按 5.4.1 启动 dev 修复遗留项 + 5.4.2 tester 回归（不占审查轮次、不再起 reviewer 复审——遗留项本就是 APPROVE 档；回归未通过时按 5.4.2 重试上限处理）。**回归通过后必须按 findings.md 条目格式记「遗留必修项已修复并回归通过（HI-xxx 清单）」**——6.0/6.2 引用遗留必修项时以此记录为准
     2) 接受遗留：转后续任务处理，记入 findings.md，Phase 6.2 汇总报告列出
   → 无需关闭 dev（dev 不跨阶段存活，此时无存活实例）
-  → TaskUpdate(taskId: "Phase5", status: "completed")
+  → 更新 findings.md 进度表：Phase 5 → completed
   → BREAK，进入 Phase 6
 
 **IF 结论 = BLOCK：**
@@ -548,13 +619,13 @@ SendMessage(to: "data-expert", message: {"type": "shutdown_request"})
   ```
   Agent(
     name: "dev",
-    team_name: "dev-team-{简短描述}",
     model: sonnet,
     prompt: {模式 B — 清单驱动模式 prompt，报告指向 review_report.md（本轮启用 data-expert 时一并指向 data_review.md）}  # 见"dev 启动 prompt 模板"节
   )
   ```
 
-  → 等待 dev 修复完成（含提交）→ 立即关闭 dev（等待 shutdown_approved）：
+  → `AWAIT(dev, 判据: `git log {BASE_BRANCH}..HEAD` 出现本轮新提交 AND progress.md 记录了本轮修复项（含 data_review.md 清单项，若本轮启用）)`
+  → 立即关闭 dev（等待 shutdown_approved）：
   ```
   SendMessage(to: "dev", message: {"type": "shutdown_request"})
   ```
@@ -571,12 +642,11 @@ SendMessage(to: "data-expert", message: {"type": "shutdown_request"})
   ```
   Agent(
     name: "tester",
-    team_name: "dev-team-{简短描述}",
     model: sonnet,
     prompt: "你是开发团队的测试工程师。执行 /tester 技能（回归测试模式）。仅回归 reviewer（及 data-expert，若本轮启用）要求修复的变更及关联影响。完成后通知 team lead。代码视图一致性纪律：测试前后两次 git diff 对比、所有代码现状陈述引用文件:行号——同 Phase 4.1。"
   )
   ```
-  → 等待 tester 完成，读取回归结论 → 关闭本轮 tester（等待 shutdown_approved 后再继续）：
+  → `AWAIT(tester, 判据: test_report.md 已更新为本轮回归结论且含明确 ✅/❌)`，读取回归结论 → 关闭本轮 tester（等待 shutdown_approved 后再继续）：
   ```
   SendMessage(to: "tester", message: {"type": "shutdown_request"})
   ```
@@ -592,7 +662,7 @@ SendMessage(to: "data-expert", message: {"type": "shutdown_request"})
     1) 追加 1 轮（轮次上限 +1 后继续，含召回 dev 修复）
     2) 接受当前状态进入下一 Phase（风险自担，记录 findings.md）
     3) 终止流程（走异常终止路径，见终止条件表）
-  暂停期间无存活成员待命（人工选追加轮次时 dev 按需重启）。人工选择后的任务状态归属：选 1 → Phase5 保持 in_progress 继续循环；选 2 → TaskUpdate(taskId: "Phase5", status: "completed") 并在 findings.md 记「审查超限接受，风险自担」后进入 Phase 6；选 3 → 保持 in_progress，走异常终止路径。
+  暂停期间无存活成员待命（人工选追加轮次时 dev 按需重启）。人工选择后的任务状态归属：选 1 → Phase5 保持 in_progress 继续循环；选 2 → 更新 findings.md 进度表：Phase 5 → completed 并在 findings.md 记「审查超限接受，风险自担」后进入 Phase 6；选 3 → 保持 in_progress，走异常终止路径。
 
 ---
 
@@ -669,7 +739,7 @@ SendMessage(to: "data-expert", message: {"type": "shutdown_request"})
 ### 团队: dev-team-{简短描述}
 
 ### 各阶段完成情况
-{从 TaskList 提取各任务状态}
+{从 findings.md 进度表提取各阶段状态}
 
 ### 质量数据
 - 测试轮次: {N} 轮
@@ -690,28 +760,33 @@ SendMessage(to: "data-expert", message: {"type": "shutdown_request"})
 - **有** → 提示用户更新项目 CLAUDE.md（装有 claude-md-management 插件时可用 /revise-claude-md）
 - **无** → 跳过
 
-### 6.4 清理团队
+### 6.4 团队清理（无需动作）
+
+**不要调用 `TeamDelete`（工具已不存在）**。团队目录随会话结束自动清理。本步无操作，直接进入 6.5 的成员回收核对。
+
+### 6.5 孤儿成员回收（必须执行）
+
+teammate 是 **in-process** 运行的——它跑在 lead 自己的 `claude` 进程内，**不是独立操作系统进程**。因此：
+
+- ❌ `ps aux | grep agent-name` 恒为空，**不能**用来判断有无孤儿（进程表里根本没有这个字符串）
+- ❌ `kill <PID>` 无对象可杀，且会误伤 lead 自身
+- ✅ 唯一可靠手段是按 name 逐个 `TaskStop`
+
+对 6.1 清单中**每一个已启动但未收到 `shutdown_approved`** 的成员执行：
+
 ```
-TeamDelete()
+TaskStop(task_id: "{角色name}")
 ```
 
-### 6.5 孤儿进程检查（必须执行）
+处理规则：
+1. 逐个回收，记录每次返回的成功/失败
+2. 返回失败或提示 task 不存在 → 说明该成员实际已停止，视为已回收，不必再处理
+3. 把「成员 name + 触发场景（哪个 Phase、为何未正常 shutdown）+ 回收结果」记入 `.claude/workspace/findings.md`，作为流程改进输入（归档在 6.6 才执行，此时文件仍在原路径）
+4. 全部成员均已 `shutdown_approved`、无需回收时：仅输出一行确认（"全部成员已正常关闭，无需回收"）
 
-TeamDelete 仅清理 config 文件，**不会 kill 成员进程**。任何在 6.1 标记为孤儿候选的成员都可能仍在运行。
+> 用户侧交叉验证入口：`/tasks` 面板列出全部在跑的 agent，在面板中选中并按 `x` 亦可停止。若 6.5 执行后 `/tasks` 里仍能看到本次任务的成员，属异常，需报告用户。
 
-```bash
-ps aux | grep -E "agent-name [^ ]+@dev-team-{简短描述}" | grep -v grep
-```
-
-如果发现仍在运行的成员进程：
-1. 列出进程清单（PID + agent-name + 启动时长）展示给用户
-2. 说明这些是 TeamDelete 后未正常 shutdown 的孤儿进程
-3. 提供 `kill <PID>` 命令，**等用户授权后再执行**（kill 属于 destructive 操作）
-4. 把孤儿成员的 name 和触发场景记录到本次任务的 `.claude/workspace/findings.md`（作为流程改进的输入；归档在 6.6 才执行，此时文件仍在原路径）
-
-如果未发现孤儿进程：仅输出一行确认即可（"无孤儿进程"）。
-
-### 6.6 归档（放在孤儿检查之后，保证 6.3/6.5 读写的 findings.md 仍在原路径）
+### 6.6 归档（放在回收核对之后，保证 6.3/6.5 读写的 findings.md 仍在原路径）
 ```bash
 # --from 短路径下部分产物可能不存在，缺失即跳过
 mkdir -p .claude/workspace/archive/{YYYYMMDD}_{需求简称}
@@ -731,7 +806,7 @@ mv .claude/workspace/release_checklist.md .claude/workspace/archive/{目录}/ 2>
 - 上线工单：`archive/{目录}/release_checklist.md`；**存在 ❌ 未通过或 ⚠️ 需人工确认卡点时在此逐条列出**，提醒用户上线前处理
 - 是否需要合并到目标分支或创建 PR
 
-TaskUpdate(taskId: "Phase6", status: "completed")
+更新 findings.md 进度表：Phase 6 → completed
 
 ---
 
@@ -761,7 +836,7 @@ TaskUpdate(taskId: "Phase6", status: "completed")
 | 场景 | 处理方式 |
 |------|---------|
 | 任何阶段遇到不可解决的问题 | 暂停，展示 findings.md，请求人工介入 |
-| **异常终止/人工中断** | 关闭所有存活成员（等待 shutdown_approved，超时按孤儿候选处理）→ TeamDelete 清理 → **孤儿进程检查（同 6.5，不可省略）** → 报告 workspace 当前状态（已生成产物清单 + 可用的 --from 复活入口） |
+| **异常终止/人工中断** | 关闭所有存活成员（等待 shutdown_approved，超时按孤儿候选 TaskStop 强制回收）→ **孤儿成员回收核对（同 6.5，不可省略）** → 报告 workspace 当前状态（已生成产物清单 + 可用的 --from 复活入口）。团队目录随会话结束自动清理，无需手动删除 |
 
 # 纪律
 
@@ -769,14 +844,16 @@ TaskUpdate(taskId: "Phase6", status: "completed")
 2. **reviewer BLOCK 后修复必须经过 tester 回归** — 防止修复引入新 bug
 3. **闭环超限必须暂停** — 不允许无限循环消耗 token
 4. **成员完成任务后必须 shutdown 并等待 shutdown_approved** — 协议细节见「关闭成员」节
-5. **流程结束必须 TeamDelete + 孤儿进程检查** — TeamDelete 不 kill 进程，必须执行 Phase 6.5
+5. **流程结束必须执行孤儿成员回收（6.5）** — 团队目录自动清理不代表成员已停止；teammate 是 in-process 的，只能用 `TaskStop(task_id: name)` 回收，`ps`/`kill` 一律无效
 6. **不替代角色执行** — 编排指挥官只调度，不直接编码/测试/审查
 7. **纠偏与修复一律按需新实例、完成即关** — tech-lead 纠偏、dev 修复每次都是 Agent() 新实例（纠偏模式/清单驱动模式），任务完成立即 shutdown；不留跨阶段待命成员，测试/审查期间团队内没有任何可改码的存活成员。例外：analyst（1.2）/ tech-lead（2.2）在等待用户确认并按答复更新自身产物期间的**同阶段**短暂存活，不属于跨阶段待命
 8. **tester 提交报告前必须 verify 代码视图未变** — 通过 git diff 与测试基准对比；如发现测试期间代码被改动（用户手工改动/外部进程），立即暂停而非继续写结论
-9. **启动同名新一轮成员前必须等前一轮 shutdown_approved** — 否则系统自动加 `-2`/`-3` 后缀导致 SendMessage 定位错误（见「启动成员」节；孤儿候选场景除外，见「关闭成员」节）
+9. **启动同名新一轮成员前必须等前一轮 shutdown_approved** — 否则同名冲突（latest-wins 抢占或自动改名，随版本而异）导致成员定位混乱、旧实例失管（见「启动成员」节；孤儿候选场景除外，按「关闭成员」节第 5 条两种行为分别处理）
 10. **--from=X 等于声明 X 之前的角色不主动启动** — 详见 §6.1 表（dev → 清单驱动模式；tech-lead → 纠偏模式）；禁止"--from=X 就完全禁用 X 之前的角色"的简化理解，会破坏闭环可达性
 11. **--from in [dev, tester, reviewer] 时沿用当前分支** — 不新建 feature 分支；启动时打印当前分支供用户确认
 12. **--from=X 的前置校验失败必须立即报错暂停** — 报错模板见 Phase 0.1，禁止静默回退到上游 phase 补生成
 13. **Phase 6 归档/孤儿检查无论起步 phase 如何都必须执行** — 包括 --from=reviewer 一次 APPROVE 的最短路径
 14. **data-expert 条件触发、与 reviewer 同档阻断** — 逐轮探测见 Phase 5.0，与 reviewer 并行启动见 5.1，结论合并规则（任一 BLOCK 即本轮 BLOCK）见 5.4
-15. **上线就绪核对（6.0）只出工单不拦截** — ✅ 必须附证据出处（文件:行号/章节），❌/⚠️ 卡点在 6.7 逐条列出交用户决策；不触发修复闭环，上线决策属于人
+15. **不得调用 `TeamCreate` / `TeamDelete` / `TaskCreate` / `TaskUpdate` / `TaskList`，不得传 `team_name`** — 前两个工具自 v2.1.178 起已移除，Task 系列非普通会话必备，`team_name` 已废弃且被忽略；团队隐式存在、名字由会话 ID 派生、退出自动清理，进度一律走 findings.md 进度表（0.5）
+16. **阶段完成判定一律走 `AWAIT(成员, 判据)` 协议** — teammate 的 idle 通知不携带产出内容，判据是**产物落盘 + 有结论性章节**，idle 通知仅为触发信号；禁止编写「等成员把结果回传」的等待逻辑（subagent 语义），否则永久阻塞。成员已 idle 但产物不达标时按协议第 3 步补齐，连续 2 次不达标即暂停请求人工；单成员 15 分钟无进展触发超时兜底。协议全文见「阶段完成判定协议」节
+17. **上线就绪核对（6.0）只出工单不拦截** — ✅ 必须附证据出处（文件:行号/章节），❌/⚠️ 卡点在 6.7 逐条列出交用户决策；不触发修复闭环，上线决策属于人
