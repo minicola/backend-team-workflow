@@ -39,7 +39,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## 架构：6 角色 + Agent Team（含 1 个条件触发成员）
 
-整个插件是一个**编排 + 5 固定角色 + 1 条件触发角色**的工作流，依赖 Claude Code 的 Agent Team API：`TeamCreate` / `Agent(team_name=…)` / `SendMessage` / `TeamDelete`。
+整个插件是一个**编排 + 5 固定角色 + 1 条件触发角色**的工作流，依赖 Claude Code 的 Agent Team API：`Agent(name=…)` 启动 teammate / `SendMessage` 通信与 shutdown / `TaskStop` 强制回收。
+
+> **API 版本红线（v2.1.178 起）**：`TeamCreate` 与 `TeamDelete` **已被移除**，`Agent` 的 `team_name` 入参**已废弃且被忽略**。当前语义是「每会话唯一隐式团队」：团队名由会话 ID 派生（`session-{前8位}`）不可指定，`Agent(...)` 带 `name` 即自动成为 teammate，会话退出时团队目录自动清理。另需 `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1` 才启用 teammate（否则退化为普通 subagent，双向通信与召回全部失效），team/SKILL.md Phase 0.1b 有门禁探测（刻意排在 0.0/0.1 参数与前置校验之后——用户输入类报错优先，且不改变 evals 三个 Phase 0 场景的期望输出）。改动流程时**不要再写回这几个已移除的工具**。
 
 ```
 team (编排，opus)
@@ -82,7 +84,8 @@ team (编排，opus)
    - 成员每完成阶段任务，team 必须立即向其发 `{"type": "shutdown_request"}`，不留空闲成员
    - tester / reviewer / data-expert（命中时）**每轮重启新实例**（不要复用旧的）
    - tech-lead 与 dev **不跨阶段存活**：Phase 2/3 各自完成后立即 shutdown；纠偏（tech-lead）与修复（dev 清单驱动模式）一律按需新实例、即用即关，同名重启前须等前一实例 shutdown_approved
-   - 流程结束（含异常终止）必须 `TeamDelete()`
+   - 流程结束（含异常终止）必须执行 Phase 6.5 **孤儿成员回收**：teammate 是 in-process 的，`ps aux | grep agent-name` 恒为空、`kill <PID>` 无效，唯一手段是对未 `shutdown_approved` 的成员逐个 `TaskStop(task_id: "{name}")`（团队目录本身随会话结束自动清理，不需要也无法手动删除）
+   - 阶段完成判定统一走 **`AWAIT(成员, 判据)` 协议**（team/SKILL.md「阶段完成判定协议」节，全流程 10 个调用点）：teammate 的 idle 通知**不携带产出内容**，判据是产物落盘 + 有结论性章节，idle 通知仅为触发信号。写「等成员把结果回传」的等待逻辑会永久阻塞。新增等待点时必须引用该协议并声明判据，不要另起等待写法
 
 5. **质量闭环上限 = 3 轮**
    tester↔dev 和 reviewer↔dev↔tester 闭环超过 3 轮必须暂停请求人工。修改这个阈值要同时改 team/SKILL.md 的两处 WHILE 循环。Phase 5 的 5.4.2 回归子循环另有独立上限（同一审查轮内重试 1 次，第二次回归仍未通过即超限暂停），与轮次上限共同构成硬边界。
