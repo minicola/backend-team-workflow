@@ -72,11 +72,7 @@ argument-hint: "[--from=<phase>] [<需求描述或PRD路径>]（--from=analyst �
 
 > 一次 `AWAIT` 只针对一个成员。Phase 5 中 reviewer 与 data-expert 并行时，分别 `AWAIT`，两者都达标才进入下一步（顺序不限，先到先读）。
 
-**技能加载方式（官方文档确认的行为，非兜底）**：本插件 7 个角色 skill 均为 `disable-model-invocation: true`——skill 描述不会进入队员上下文、Skill 工具无法调用、也不会 preload 进 subagent，因此队员**必然无法**通过 /X 加载。各 Phase 的 Agent() prompt 中『执行 /X 技能』字样，发送前一律替换为：
-
-> 用 Read 读取 `${CLAUDE_PLUGIN_ROOT}/skills/X/SKILL.md` 全文并严格遵循其中的执行步骤与纪律
-
-（`${CLAUDE_PLUGIN_ROOT}` 在本 skill 加载时已解析为插件安装绝对路径，直接拼接使用。）该替换仅适用于本插件的 7 个角色 skill；/simplify、code-simplifier、ralph-loop 等外部技能不受此限制，可用性按各角色 SKILL 声明的降级路径处理。
+**技能加载方式**：本插件 6 个角色 skill（analyst / tech-lead / dev / tester / reviewer / data-expert）均不带 `disable-model-invocation`（见仓库 CLAUDE.md 约定 3），各 Phase 的 Agent() prompt 中『执行 /X 技能』经 Skill 工具直接生效，无需任何路径替换。/simplify、code-simplifier、ralph-loop 等外部技能的可用性按各角色 SKILL 声明的降级路径处理。
 
 **启动同名新一轮成员前必须确认前一轮已收到 `shutdown_approved`**（系统通知 "X has shut down"）。否则同名冲突的系统行为（latest-wins 抢占或自动加 `-2`/`-3` 后缀，随版本而异）都会造成成员定位混乱——旧实例可能仍在消耗 token 却无人管理。
 
@@ -135,7 +131,7 @@ dev 的 Agent() 启动 prompt 分两种模式。dev 不跨阶段存活：Phase 3
 
 ```
 你是开发团队的后端开发工程师（清单驱动模式）。
-先用 Read 读取 ${CLAUDE_PLUGIN_ROOT}/skills/dev/SKILL.md 全文并严格遵循——你的启动方式即其 Step 0 定义的清单驱动模式（跳过复杂度评估与模块化实现，仍走 Step 4 全部门禁并更新 progress.md）；下述任务范围与约束是该模式在本次实例的具体化。
+先执行 /dev 技能并严格遵循其 SKILL.md——你的启动方式即其 Step 0 定义的清单驱动模式（跳过复杂度评估与模块化实现，仍走 Step 4 全部门禁并更新 progress.md）；下述任务范围与约束是该模式在本次实例的具体化。
 你以全新实例启动，不携带此前的编码上下文（此前编码可能由前一 dev 实例完成，或因 --from={START_PHASE} 跳过）。
 
 任务范围：根据 {test_report.md | review_report.md} 中列出的"问题/缺口清单"逐项处理——**既包括 Bug 修复，也包括补齐报告指出的缺失实现**；若 .claude/workspace/data_review.md 存在，一并读取其数据层问题清单（迁移回滚/索引/一致性）：
@@ -418,6 +414,11 @@ dev 报告模块完成时，检查 findings.md。**偏离判定标准（命中�
     message: "tech-lead 修正指令：{内容}。请按修正继续。"
   )
   ```
+
+**环境前置未就绪处理：**
+dev 开工前核对 architecture.md「环境前置清单」后报告存在未就绪的人工前置项（Nacos 配置、中间件资源等）：
+- 将未就绪条目**连同其可直接复制执行的内容块**（完整 SQL / Nacos 配置全文 / 完整命令，来自 architecture.md 清单明细或 dev 上报消息）原样展示给用户，等待人工初始化——不要转述成摘要
+- 用户确认就绪后 → SendMessage 通知 dev 继续
 
 **ralph-loop 超限处理：**
 dev 报告编译 3 轮未通过：

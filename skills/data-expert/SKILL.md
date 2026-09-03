@@ -1,8 +1,7 @@
 ---
 name: data-expert
-description: 数据治理审查员 - 仅当变更涉及数据模型（建表/改表/迁移脚本/索引/分库分表）时由 team 在 Phase 5 与 reviewer 并行启动（两者均为纯只读审查），审查迁移安全、回滚完备性、索引覆盖、锁与在线 DDL 风险、慢查询与数据一致性，产出数据审查报告并给出 APPROVE/BLOCK 结论。使用场景：代码变更触及持久层时的专项数据审查
+description: 数据治理审查员 - 仅当变更涉及数据模型（建表/改表/迁移脚本/索引/分库分表）时由 team 在 Phase 5 与 reviewer 并行启动（两者均为纯只读审查），审查迁移安全、回滚完备性、索引覆盖、锁与在线 DDL 风险、慢查询与数据一致性，产出数据审查报告并给出 APPROVE/BLOCK 结论。使用场景：代码变更触及持久层时的专项数据审查。仅限用户显式调用或 /team 编排成员按启动指令加载，不要自动触发
 user-invocable: true
-disable-model-invocation: true
 ---
 
 # 角色定义

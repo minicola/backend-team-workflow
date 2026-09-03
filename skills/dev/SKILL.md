@@ -1,8 +1,7 @@
 ---
 name: dev
-description: 后端开发工程师 - 按技术方案实现代码，支持复杂度动态评估后升级为团队模式（dev-leader + sub-dev），内部使用 ralph-loop 编译迭代，完成后强制执行 /simplify + code-simplifier 代码优化。使用场景：技术设计完成后进入编码阶段，或直接编码场景
+description: 后端开发工程师 - 按技术方案实现代码，支持复杂度动态评估后升级为团队模式（dev-leader + sub-dev），内部使用 ralph-loop 编译迭代，完成后强制执行 /simplify + code-simplifier 代码优化。使用场景：技术设计完成后进入编码阶段，或直接编码场景。仅限用户显式调用或 /team 编排成员按启动指令加载，不要自动触发
 user-invocable: true
-disable-model-invocation: true
 argument-hint: <需求描述（直接编码时使用）>
 ---
 
@@ -26,6 +25,7 @@ argument-hint: <需求描述（直接编码时使用）>
 6. **Important Constraints** — 禁止事项（如禁止 BeanUtils、禁止跨层调用等）
 7. **Naming Conventions** — 类命名约定（如 Repository 命名规范）
 8. **AI 编码行为约束** — 项目特定的 AI 约束
+9. **Database Access**（可选） — dev/test 环境数据库只读通道声明（MCP 工具名、迁移执行方式、分片拓扑、环境自证锚点）。缺失时 Step 4.5 数据验证自动跳过
 
 **所有编码决策必须符合 CLAUDE.md 中的约束。若 CLAUDE.md 缺失 → 暂停，通知用户补充（若作为 team 成员运行：SendMessage 通知 team lead，由其暂停流程向用户求确认，等待转回的答复再继续）。**
 
@@ -53,12 +53,22 @@ argument-hint: <需求描述（直接编码时使用）>
   - 涉及的模块和文件
   - 实现步骤
   - 关键设计决策
+  - 环境前置清单（格式同 tech-lead 模板：总览表 + 人工前置项逐条附可直接复制执行的内容块与就绪核验——完整 SQL / Nacos 配置全文 / 完整命令；无前置项时显式写"无"）
 - 自动创建 feature 分支: `fyx/feature/{YYYYMMDD}_{简短描述}`
 - 确保 `.claude/workspace/` 已写入 `.git/info/exclude`（独立 /dev 入口无 team Phase 0.2，需自行补齐）：`grep -qxF '.claude/workspace/' .git/info/exclude 2>/dev/null || echo '.claude/workspace/' >> .git/info/exclude`
 
 **兜底**：若 $ARGUMENTS 为空、`.claude/workspace/architecture.md` 不存在、且启动 prompt 中无 team 标识 → 暂停，向用户索要需求描述（提示：`/dev <需求描述>`）或确认 architecture.md 路径。
 
 读取 `.claude/workspace/findings.md` 了解已知问题。
+
+**环境前置核对（获取方案后、编码前执行）：**
+
+1. 读取 architecture.md「环境前置清单」章节；章节缺失（旧方案）→ 跳过核对并在 progress.md 标注
+2. 仅核对标注**人工前置**的条目（**工作流内**条目由本流程自己产出，走 Step 4.5 验证，不在此核对）：
+   - SQL 类：`Database Access` 通道可用时先环境自证，再执行清单条目自带的「就绪核验」语句（缺失时自拟只读 SELECT / SHOW）核验表已建、种子数据已就位
+   - Nacos / 中间件类：无自动核验通道，逐项向上确认（/team 模式 SendMessage 给 team lead，/dev 直入时直接询问用户）
+3. 核对结果写入 progress.md「环境前置」块：就绪 / 未就绪（列出条目）/ 无前置项 / 章节缺失
+4. 存在未就绪的人工前置项 → **暂停编码并上报**，上报消息中直接附上清单里对应条目的可复制内容块（完整 SQL / Nacos 配置全文 / 完整命令），让对方无需翻文件即可执行；收到"已就绪"确认后再继续
 
 ## Step 2: 复杂度评估
 
@@ -173,6 +183,20 @@ sub-dev 按完成顺序逐个合并到当前 feature 分支（dev 所在工作�
 5. 更新 `.claude/workspace/progress.md` 为"编码完成，待提测"
 6. 提交改动：`git add -A ':(exclude).claude/workspace'` && `git commit -m "feat: {模块/修复说明}"` — 在当前 feature 分支内提交，**禁止 push**；提交前确认当前分支非 main/master，是则不提交并上报 team lead（独立 /dev 场景改为提示用户）
 
+## Step 4.5: 数据验证（条件触发）
+
+**触发判定**（两个条件同时成立才执行，否则跳过并在 progress.md 记一行跳过原因）：
+
+1. `DATA_CHANGE=true`：本次 `git diff` 命中任一 — 迁移脚本（如 `db/migration/`、liquibase changelog）/ Entity(PO) / Mapper(XML) / 分库分表配置
+2. 通道可用：项目根 CLAUDE.md 存在 `Database Access` 节，且其声明的 dev 只读工具（如 `execute_sql_dev`）在当前会话可见
+
+**执行顺序：**
+
+1. **环境自证**：经 dev 只读工具执行 `SELECT @@hostname, DATABASE()`，与 `Database Access` 节的环境自证锚点对照。不一致 → 立即停止数据验证并上报，禁止继续
+2. **迁移验证**（本次含迁移脚本时）：按 `Database Access` 声明的方式执行迁移（如 `mvn flyway:migrate`，**不经 MCP**）；随后查迁移历史表确认版本落地，`SHOW CREATE TABLE` 确认表结构与 architecture.md 一致
+3. **落库验证**：通过测试代码或本地接口调用触发一条业务写入（**写入不经 MCP**），再经 dev 只读工具 SELECT 验证字段值/默认值/状态；涉及分库分表时按声明的拓扑核对分片路由（直连物理库时需查对应物理分片表）
+4. **结果记录**：progress.md 增加「数据验证」块（通过/失败/跳过+原因）；失败按证据定位修复后重验，修复计入本阶段编码工作，不新增闭环
+
 ## Step 5: 提测
 
 向 /team 主会话报告编码完成，准备进入 tester 阶段。
@@ -183,7 +207,7 @@ sub-dev 按完成顺序逐个合并到当前 feature 分支（dev 所在工作�
 
 1. 读取 `.claude/workspace/test_report.md` 或 `.claude/workspace/review_report.md`；从 reviewer 阶段返回且 `.claude/workspace/data_review.md` 存在时，一并读取其数据层问题清单
 2. 只修复报告中标记的问题，**不做额外变更**（dev 自己实现，并做范围校验与本地复编译）
-3. 修复后重新执行 Step 4（格式化 + 编译 + /simplify + code-simplifier）
+3. 修复后重新执行 Step 4（格式化 + 编译 + /simplify + code-simplifier）；若修复涉及数据变更，重跑 Step 4.5 数据验证
 4. 提交修复改动（同 Step 4 第 6 条：排除 `.claude/workspace`，当前 feature 分支内提交，禁止 push，主干分支拦截）
 5. 更新 progress.md
 
@@ -195,3 +219,5 @@ sub-dev 按完成顺序逐个合并到当前 feature 分支（dev 所在工作�
 4. **每次修改前先读目标文件** — 理解上下文再动手
 5. **ralph-loop 超限必须上报** — 3 轮编译不过必须向 /team 汇报，禁止无限重试（ralph-loop 不可用退化为手动编译循环时同样适用）
 6. **目标驱动** — 开始前列出成功标准，执行中检查偏离，结束前验证达成
+7. **数据验证通道只读** — 经 MCP 数据库工具仅允许 SELECT / SHOW / DESCRIBE / EXPLAIN；迁移执行与测试数据写入一律走项目原生工具链（mvn / 测试代码），不经 MCP。验证前必须环境自证，连接目标以 CLAUDE.md `Database Access` 节声明为准，严禁触碰生产环境
+8. **人工前置未就绪不开工** — architecture.md「环境前置清单」中标注人工前置的条目（Nacos 配置、中间件资源等）未确认就绪前不进入编码；核对结果必须落 progress.md「环境前置」块

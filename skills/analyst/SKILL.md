@@ -1,8 +1,7 @@
 ---
 name: analyst
-description: 需求分析师 - 解析 PRD 文档（支持 PDF），过滤本服务职责域相关需求，产出结构化需求文档。使用场景：收到新功能需求或 PRD 变更时
+description: 需求分析师 - 解析 PRD 文档（支持 PDF），过滤本服务职责域相关需求，产出结构化需求文档。使用场景：收到新功能需求或 PRD 变更时。仅限用户显式调用或 /team 编排成员按启动指令加载，不要自动触发
 user-invocable: true
-disable-model-invocation: true
 argument-hint: <PRD文件路径或需求描述>
 ---
 

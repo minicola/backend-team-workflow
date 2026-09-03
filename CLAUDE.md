@@ -75,10 +75,11 @@ team (编排，opus)
    改动文件名或目录会同时打破多个 skill，需要全局替换。
 
 2. **每个角色必读"目标项目"根目录的 CLAUDE.md**（注意：不是本仓库这份）
-   analyst / tech-lead / dev / tester / reviewer / data-expert 的 Step 1 都是「读取项目根 CLAUDE.md」，从中提取 `Service Responsibility Boundary` / `Module Structure` / `Layer Dependencies` / `Tech Stack` / `Package Conventions` / `Important Constraints` 等小节并据此决策（data-expert 侧重 `Tech Stack`/ORM/分库分表与 `Naming Conventions`；tester 侧重 `Tech Stack`/构建工具/测试约定，缺失时按 JUnit5+mvn 默认并在报告标注）。新增角色或调整字段名时，要同步所有读取方。
+   analyst / tech-lead / dev / tester / reviewer / data-expert 的 Step 1 都是「读取项目根 CLAUDE.md」，从中提取 `Service Responsibility Boundary` / `Module Structure` / `Layer Dependencies` / `Tech Stack` / `Package Conventions` / `Important Constraints` 等小节并据此决策（data-expert 侧重 `Tech Stack`/ORM/分库分表与 `Naming Conventions`；tester 侧重 `Tech Stack`/构建工具/测试约定，缺失时按 JUnit5+mvn 默认并在报告标注）。dev 与 tester 另读取可选的 `Database Access` 节（dev Step 4.5 数据验证、tester Step 4.5 数据断言，见约定 10）。新增角色或调整字段名时，要同步所有读取方。
 
-3. **frontmatter `user-invocable: true` + `disable-model-invocation: true`**
-   7 份 SKILL.md 都带这对字段：只能由用户用 `/<skill>` 主动触发，模型不能自动调用。修改时不要随手改掉。拦截边界已经官方文档确认（code.claude.com/docs/en/skills「Control who invokes a skill」及 frontmatter 参考表）：`disable-model-invocation: true` 时 skill 描述不进模型上下文、Skill 工具不可调用、且不会 preload 进 subagent——Agent Team 队员经 prompt 指示执行 /X **必然被拦截**。因此 team SKILL「启动成员」节把 Read 定为标准加载路径（`${CLAUDE_PLUGIN_ROOT}/skills/<X>/SKILL.md`，占位符在 skill 正文中直接解析），不是兜底。
+3. **frontmatter 调用控制字段（team 与角色不同，不要混淆）**
+   - `team/SKILL.md` 保留 `user-invocable: true` + `disable-model-invocation: true`：编排入口只能由用户 `/team` 主动触发。
+   - 其余 6 个角色 skill（含 data-expert）只保留 `user-invocable: true`，**不带** `disable-model-invocation`。带该字段时 skill 描述不进模型上下文、Skill 工具不可调用（官方文档 code.claude.com/docs/en/skills「Control who invokes a skill」），team 成员经 prompt 中的「执行 /X 技能」会被拦截；去掉后成员直接经 Skill 工具加载，team 的启动 prompt 不需要任何路径替换。（2026-09-03 在 Claude Code 2.1.259 实测：subagent 用 Read 读取带该字段的 SKILL.md 并未被拦截，所以「保留字段 + Read 加载」也能跑，但多一层 `${CLAUDE_PLUGIN_ROOT}` 路径拼接且无收益，不采用。）防自动触发改由各角色 description 末尾的「仅限用户显式调用或 /team 编排成员按启动指令加载，不要自动触发」声明承担，修改 description 时不要删掉这句。
 
 4. **生命周期纪律（team/SKILL.md 末尾的"纪律"节）**
    - 成员每完成阶段任务，team 必须立即向其发 `{"type": "shutdown_request"}`，不留空闲成员
@@ -101,6 +102,16 @@ team (编排，opus)
 
 9. **Git 提交纪律贯穿闭环**（team Phase 0.0/0.3、dev Step 4/修复模式、tester Step 5）
    team 启动时探测 `BASE_BRANCH`（main/master），主干上不执行任何提交类操作（0.3 拦截沿用主干）；dev 完成编码/修复、tester 产出测试代码后均在 feature 分支内提交（排除 `.claude/workspace`，禁止 push）；reviewer 纯只读开审，审查范围 = 已提交 diff + 未提交改动（正常流程下应为空，如有则并入范围并在报告标注来源待查）。workspace 不入库的主防线是 team 0.2 幂等写入 `.git/info/exclude`（独立 /dev 入口自行补齐）；提交命令中的 `:(exclude)` 是独立入口未经 0.2 时的兜底——**两层都不要随手删**。
+
+10. **数据验证通道（可选能力，2026-08-26 引入）**
+   dev（Step 4.5 数据验证）与 tester（Step 4.5 数据断言）依赖目标项目 CLAUDE.md 的 `Database Access` 节声明：MCP 只读工具名（DBHub 多源命名 `execute_sql_{source_id}`，约定 source id 用 `dev` / `test`）、迁移执行方式、分片拓扑、环境自证锚点。三条不变量：
+   - MCP 通道永远只读（SELECT/SHOW/DESCRIBE/EXPLAIN）；写操作（执行迁移、造测试数据）走项目原生工具链，不经 MCP
+   - 验证/断言前必须环境自证（`SELECT @@hostname, DATABASE()` 对照锚点），严禁生产环境
+   - 该节缺失或工具不可见时跳过并在 progress.md / test_report.md 标注原因，不阻塞流程
+   目标项目配置模板见 `docs/20260826_database-access-setup.md`。改动节名、工具命名或不变量时要同步 dev、tester 两个 SKILL.md 与该模板。
+
+11. **环境前置清单（2026-08-28 引入）**
+   tech-lead 的 architecture.md 模板固定含「环境前置清单」章节（Nacos 配置 / SQL / 中间件资源，每条标注初始化方式：**工作流内** = dev 编码阶段产出并经 Step 4.5 验证；**人工前置** = agent 无法自建，编码前须人工就绪）。**人工前置条目必须逐条附可直接复制执行的内容块与就绪核验**（完整 SQL / Nacos 配置全文 / 完整命令），禁止摘要式描述；Nacos 定位（namespace/group/dataId/key）须取自目标项目真实配置并与代码消费方一致，分片表 SQL 须按物理拓扑展开；未就绪上报与 team lead 展示时都原样携带内容块。dev Step 1 只核对人工前置项：SQL 类经 `Database Access` 只读通道执行条目自带的就绪核验语句，Nacos/中间件类向上确认；未就绪即暂停上报（/team 由 team lead 3.2 转人工确认）。`/dev` 直入时 dev 自写简版方案也必须含该章节。改动章节名、"工作流内/人工前置"语义或"可复制内容块"要求时要同步 tech-lead、dev、team 三个 SKILL.md。
 
 ## 已知陷阱
 
