@@ -87,7 +87,7 @@ mvn test -pl <受影响模块>
 
 **触发判定**（两个条件同时成立才执行，否则跳过，并在测试报告「数据断言」节注明原因）：
 
-1. 本次变更涉及数据模型/迁移（依据 architecture.md 数据模型章节或 progress.md 的 DATA_CHANGE 标记）
+1. 本次变更涉及数据模型/迁移（依据 progress.md「数据验证」块的 `DATA_CHANGE=true` 标记，或 architecture.md「数据模型变更」非"无"；两者缺失时按 git diff 是否命中迁移/Entity/Mapper 自判）
 2. 项目根 CLAUDE.md 存在 `Database Access` 节，且其声明的 test 只读工具（如 `execute_sql_test`）在当前会话可见
 
 **执行：**
@@ -205,11 +205,13 @@ git commit -m "test: {需求/模块说明} 第 {N} 轮测试"
 > **回归输入以 team-lead 启动 prompt 指定的清单为准**——可能是上一轮 test_report.md 的 Bug 清单（Phase 4 闭环），也可能是 review_report.md / data_review.md 的修复项清单（Phase 5 reviewer/data-expert BLOCK 后回归）。无历史 test_report.md 时（如 --from=reviewer 首次回归），新建测试报告、轮次记为第 1 轮。
 
 1. 读取 team-lead 指定的修复项清单（上一轮 test_report.md 的 Bug 清单 或 review_report.md / data_review.md 的修复项）
-2. **仅回归以下内容**：
+2. **重新捕获基准**：按 Step 4 用当前 `git diff {BASE_BRANCH}...HEAD` 与 HEAD commit 覆盖「测试基准」章节（旧基准早于修复提交，沿用会让 Step 5 的「结论前复核」误报漂移）；结论前复核照常执行
+3. **仅回归以下内容**：
    - 修复项对应的测试用例（验证修复；bug 源自数据断言的，重跑对应断言）
    - 修复代码可能影响的关联功能（防止引入新问题）
-3. **不重新执行**所有测试用例
-4. 更新测试报告：
+   - 被 team lead 裁决为「争议项跳过」的修复项（progress.md 有记录）→ 修正或移除对应的错误用例，报告中标注「用例已修正：{原因}」，不再计为 Bug
+4. **不重新执行**所有测试用例
+5. 更新测试报告：
    - 测试轮次 +1（无历史报告时记第 1 轮）
    - 已修复项的状态改为"已验证"
    - 如有新发现的 bug，追加到 Bug 清单

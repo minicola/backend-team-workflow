@@ -31,7 +31,7 @@ user-invocable: true
 
 ## Step 1: 收集变更
 
-- 执行 `git diff {BASE_BRANCH}...HEAD`（主干分支：main/master 按项目实际）查看已提交变更 + `git status --porcelain` / `git diff` 查看未提交改动（正常流程下 dev/tester 已各自提交，应为空；如有未提交改动则并入审查范围，并在报告「审查信息」中注明其来源待查）
+- 执行 `git diff {BASE_BRANCH}...HEAD` 查看已提交变更（`{BASE_BRANCH}` 由 team 启动 prompt 给出；独立运行时自行探测：`git rev-parse --verify main` 成功取 main，否则 master）+ `git status --porcelain` / `git diff` 查看未提交改动（正常流程下 dev/tester 已各自提交，应为空；如有未提交改动则并入审查范围，并在报告「审查信息」中注明其来源待查）；记录 `git rev-parse --short HEAD` 作为本轮「审查基准 commit」
 - 读取 `.claude/workspace/architecture.md` 理解设计意图（若不存在则跳过）
 - 读取 `.claude/workspace/findings.md` 了解已知问题
 - 读取 `.claude/workspace/test_report.md` 了解测试结果（若不存在则跳过）
@@ -64,8 +64,10 @@ user-invocable: true
 
 ### HIGH（应修复）
 
+> 标〔规范类〕的项无运行期影响，判定时与坏味道（严重）同档：有其他 BLOCK 项时搭车修复，单独出现时走「遗留必修项」（见 Step 4）。
+
 **Spring Boot 规范：**
-- [ ] @Autowired 字段注入（应使用构造器注入）
+- [ ] @Autowired 字段注入（应使用构造器注入）〔规范类〕
 - [ ] 业务逻辑写在 Controller 中（应委托给 Service）
 - [ ] @Transactional 放在错误的层（应在 domain 或 app service 层）
 - [ ] @Service 类中的可变字段（线程安全风险）
@@ -76,14 +78,14 @@ user-invocable: true
 
 **领域规范：**
 - [ ] 副作用未通过领域事件解耦（直接调用其他域的服务）
-- [ ] Repository 未遵循 CLAUDE.md 中规定的命名规范
+- [ ] Repository 未遵循 CLAUDE.md 中规定的命名规范〔规范类〕
 
-**可观测性落地核对（仅当 architecture.md 有相应规划时检查）：**
-> tech-lead 在 architecture.md 的缺口审查/可观测性维度可能规划了关键路径日志、监控指标、告警。这些"设计了但没落地"是常见盲区——本步负责核对设计与实现是否一致。
+**可观测性落地核对（仅当 architecture.md「可观测性设计」小节非"无"时检查）：**
+> tech-lead 在 architecture.md「可观测性设计」小节规划了关键路径日志、监控指标、告警。这些"设计了但没落地"是常见盲区——本步逐项核对该小节与实现是否一致。
 - [ ] architecture.md 规划的关键路径**日志**是否在代码中实现（含必要的上下文字段，且不泄漏 PII/Token）
 - [ ] architecture.md 规划的**监控指标/埋点**（如 Micrometer 计数器、耗时统计）是否落地
 - [ ] 关键失败路径是否有可定位问题的日志/告警钩子
-> 规划项未落地 → 按 HIGH 处理（BLOCK 交 dev 补齐）；architecture.md 未规划可观测性则本项 N/A。
+> 规划项未落地 → 按 HIGH 处理（BLOCK 交 dev 补齐）；「可观测性设计」小节为"无"或 architecture.md 缺失则本项 N/A。
 
 **代码坏味道（严重）：**
 - [ ] 重复代码：跨文件或同文件复制粘贴的逻辑块（记入报告交 dev 提取重构）
@@ -121,6 +123,7 @@ user-invocable: true
 | 审查日期 | {YYYY-MM-DD} |
 | 审查轮次 | 第 {N} 轮 |
 | 变更文件数 | {N} |
+| 审查基准 commit | {git rev-parse --short HEAD} |
 | 测试报告 | {已读取 / 缺失（--from=reviewer 直入）} |
 | 未提交改动 | 无 / 有（已并入审查范围，来源待查） |
 | 审查结论 | ✅ APPROVE / ❌ BLOCK |
@@ -155,7 +158,7 @@ user-invocable: true
 ## 遗留必修项（仅 APPROVE with mandatory-fix 时非空）
 | 编号 | 类型 | 文件:行号 | 说明 |
 |------|------|----------|------|
-| HI-xxx | 坏味道（严重） | {file_path:line_number} | {必须修复的理由} |
+| HI-xxx | 坏味道（严重）/ 规范类 | {file_path:line_number} | {必须修复的理由} |
 
 > 本节非空时结论仍为 APPROVE，但 team 必须在 Phase 5.4 向用户呈现本清单并请其决策；无遗留项时填「无」。
 
@@ -176,13 +179,13 @@ user-invocable: true
 
 ## Step 4: 判定标准
 
-> 一次 BLOCK 轮的代价是 dev 修复 + tester 回归 + 新 reviewer 复审，因此**坏味道（严重）不单独烧一轮**：有其他 BLOCK 项时搭车修复，单独出现时以「遗留必修项」APPROVE 交用户决策。
+> 一次 BLOCK 轮的代价是 dev 修复 + tester 回归 + 新 reviewer 复审，因此**坏味道（严重）与〔规范类〕项不单独烧一轮**：有其他 BLOCK 项时搭车修复，单独出现时以「遗留必修项」APPROVE 交用户决策。
 
 | 条件 | 结论 |
 |------|------|
 | 存在 CRITICAL 问题 | **BLOCK** — 必须修复 |
-| 存在 HIGH 问题（安全 / 架构违规 / Spring 规范 / 数据访问 / 领域规范 / 可观测性未落地） | **BLOCK** — 应修复；此时坏味道（严重）HI-xxx 一并列入修复清单（搭车修复，不单独计轮） |
-| HIGH 仅剩坏味道（严重）类，无其他 BLOCK 项 | **APPROVE with mandatory-fix** — 记入报告「遗留必修项」，由 team 在 Phase 5.4 交用户决策（立即追加修复+回归 / 转后续任务） |
+| 存在 HIGH 问题（Spring 规范 / 数据访问 / 领域规范 / 可观测性未落地，不含〔规范类〕与坏味道） | **BLOCK** — 应修复；此时坏味道（严重）与〔规范类〕HI-xxx 一并列入修复清单（搭车修复，不单独计轮） |
+| HIGH 仅剩坏味道（严重）与〔规范类〕项，无其他 BLOCK 项 | **APPROVE with mandatory-fix** — 记入报告「遗留必修项」，由 team 在 Phase 5.4 交用户决策（立即追加修复+回归 / 转后续任务） |
 | 仅有 MEDIUM 问题 | **APPROVE** with comments |
 | 无问题 | **APPROVE** |
 
@@ -194,7 +197,7 @@ user-invocable: true
 当启动 prompt 标注「（第 N 轮复审）」时，按增量复审执行，不做全量重审：
 
 1. 读取上一轮 `review_report.md`，逐项验证 CR-xxx / HI-xxx 修复状态（已修复 / 未修复 / 修复引入新问题）
-2. Step 2 审查范围 = 上轮 BLOCK 项 + 本轮修复 diff 增量；上轮未报问题且本轮未变更的文件不重审
+2. Step 2 审查范围 = 上轮 BLOCK 项 + 本轮修复 diff 增量（`git diff {上一轮报告「审查基准 commit」}...HEAD`）；上轮未报问题且本轮未变更的文件不重审
 3. 报告沿用上一轮问题编号并填写修复状态，新发现问题按编号顺延新增
 
 # 纪律
@@ -203,4 +206,4 @@ user-invocable: true
 2. **每个问题必须给出文件路径和行号** — 不能说"某处有问题"
 3. **审查范围仅限本次变更** — 不评审无关文件
 4. **覆盖优先** — 以项目规范和上线标准为判定依据；发现的问题全部写入报告并按 Step 4 分级，不因"可能不重要"或"不确定"而省略（不确定的标注置信度），取舍由分级规则和 team lead 完成。无 CLAUDE.md 规范支撑的纯个人风格偏好不作为问题上报
-5. **坏味道分级处理（Step 2 / Step 4）** — 严重档 HIGH 不单独触发 BLOCK：有其他 BLOCK 项时随该轮修复清单搭车，单独出现时按「遗留必修项」APPROVE 交用户决策；轻度档 MEDIUM 给建议；死代码仅限本次变更引入的
+5. **坏味道与规范类分级处理（Step 2 / Step 4）** — 坏味道严重档与〔规范类〕HIGH 不单独触发 BLOCK：有其他 BLOCK 项时随该轮修复清单搭车，单独出现时按「遗留必修项」APPROVE 交用户决策；轻度档 MEDIUM 给建议；死代码仅限本次变更引入的

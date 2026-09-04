@@ -54,7 +54,9 @@ argument-hint: <需求描述（直接编码时使用）>
   - 实现步骤
   - 关键设计决策
   - 环境前置清单（格式同 tech-lead 模板：总览表 + 人工前置项逐条附可直接复制执行的内容块与就绪核验——完整 SQL / Nacos 配置全文 / 完整命令；无前置项时显式写"无"）
-- 自动创建 feature 分支: `fyx/feature/{YYYYMMDD}_{简短描述}`
+  - 可观测性设计、灰度与回滚预案（格式同 tech-lead 模板；不涉及时显式写"无"）
+- 自动创建 feature 分支: `{BRANCH_PREFIX}feature/{YYYYMMDD}_{简短描述}`，`BRANCH_PREFIX` 取 `git config --get backend-team-workflow.branchPrefix`，缺省 `fyx/`；当前分支非主干时先提示用户确认是否从当前分支派生
+- 工作树有未提交改动（`git status --porcelain` 非空）→ 提示用户二选一：在新分支创建基线提交 `chore: baseline`（排除 `.claude/workspace`），或退出自行 stash/提交后重跑；不带未提交改动开工，避免 Step 4 的提交吞入无关改动
 - 确保 `.claude/workspace/` 已写入 `.git/info/exclude`（独立 /dev 入口无 team Phase 0.2，需自行补齐）：`grep -qxF '.claude/workspace/' .git/info/exclude 2>/dev/null || echo '.claude/workspace/' >> .git/info/exclude`
 
 **兜底**：若 $ARGUMENTS 为空、`.claude/workspace/architecture.md` 不存在、且启动 prompt 中无 team 标识 → 暂停，向用户索要需求描述（提示：`/dev <需求描述>`）或确认 architecture.md 路径。
@@ -150,16 +152,18 @@ sub-dev 的 prompt 模板：
 - --max-iterations 3
 - --completion-promise "COMPILE PASS"
 ralph-loop 不可用时退化为手动"编译 → 修错"循环，同样以 3 轮为上限。3 轮内编译未通过，停止并汇报错误详情。
+
+编译通过后在你所在的 worktree 分支提交：`git add -A ':(exclude).claude/workspace'` && `git commit -m "feat: {子任务}"`（禁止 push、禁止切换分支），并在最终结果中回报分支名、worktree 路径与 commit hash，供 dev-leader 合并。
 ```
 
 ### 3B.3 逐个合并
 
-sub-dev 按完成顺序逐个合并到当前 feature 分支（dev 所在工作分支，即 `fyx/feature/...`）：
-1. 检查 sub-dev 产出的代码
-2. 合并到当前 feature 分支（dev 所在工作分支，即 `fyx/feature/...`）
+sub-dev 按完成顺序逐个合并到当前 feature 分支（dev 所在工作分支）：
+1. 按 sub-dev 回报的分支名检查其提交（`git log {分支} --oneline`、`git diff HEAD...{分支}`）
+2. `git merge --no-ff {分支}` 合并到当前 feature 分支
 3. 解决冲突（如有）
 4. 确保合并后编译通过
-5. 继续合并下一个
+5. 清理 `git worktree remove {路径}` 与 `git branch -d {分支}`，继续合并下一个
 
 **严禁向 main/master 直接合并。**
 
@@ -185,7 +189,7 @@ sub-dev 按完成顺序逐个合并到当前 feature 分支（dev 所在工作�
 
 ## Step 4.5: 数据验证（条件触发）
 
-**触发判定**（两个条件同时成立才执行，否则跳过并在 progress.md 记一行跳过原因）：
+**触发判定**（两个条件同时成立才执行，否则跳过并在 progress.md 记一行跳过原因）。无论是否执行，progress.md「数据验证」块首行必须写 `DATA_CHANGE=true` 或 `DATA_CHANGE=false`（按条件 1 的判定），team Phase 5.0 与 tester Step 4.5 以此为输入之一：
 
 1. `DATA_CHANGE=true`：本次 `git diff` 命中任一 — 迁移脚本（如 `db/migration/`、liquibase changelog）/ Entity(PO) / Mapper(XML) / 分库分表配置
 2. 通道可用：项目根 CLAUDE.md 存在 `Database Access` 节，且其声明的 dev 只读工具（如 `execute_sql_dev`）在当前会话可见
@@ -207,14 +211,17 @@ sub-dev 按完成顺序逐个合并到当前 feature 分支（dev 所在工作�
 
 1. 读取 `.claude/workspace/test_report.md` 或 `.claude/workspace/review_report.md`；从 reviewer 阶段返回且 `.claude/workspace/data_review.md` 存在时，一并读取其数据层问题清单。项目根 CLAUDE.md 必读；architecture.md / task_plan.md 若存在必读，歧义以 task_plan.md 为准；两者均不存在时（如 --from=reviewer 最短路径）以报告清单 + git diff 现状为准，仍有歧义则向 team lead（独立场景：用户）求裁决
 2. 只处理报告清单内的问题——含 Bug、未覆盖的验收标准、未实施的安全控制等报告指出的缺失实现——**不做额外变更**；清单外的代码即使有问题也只报告（SendMessage 给 team lead / 提示用户），不借机重构或加功能
-3. 修复后重新执行 Step 4（格式化 + 编译 + /simplify + code-simplifier）；若修复涉及数据变更，重跑 Step 4.5 数据验证
-4. 提交修复改动（同 Step 4 第 6 条：排除 `.claude/workspace`，当前 feature 分支内提交，禁止 push，主干分支拦截）
-5. 更新 progress.md
+3. 清单条目不能照单修复时不要硬改，上报并等待裁决（team 流程：SendMessage team lead；独立场景：提示用户）：
+   - **争议项**：条目不成立（如测试用例本身错误、与 task_plan.md 验收标准矛盾），附文件:行号证据；裁决为跳过时在 progress.md 记「争议项已裁决跳过：{编号 + 理由}」
+   - **方案级问题**：修复需改接口签名/表结构/模块划分，等待 tech-lead 纠偏指令后再动
+4. 修复后重新执行 Step 4（格式化 + 编译 + /simplify + code-simplifier），其中 /simplify 与 code-simplifier 的范围**限定为本次修复改动**（自上次提交以来的 diff），不重扫已审查通过的代码；若修复涉及数据变更，重跑 Step 4.5 数据验证
+5. 提交修复改动（同 Step 4 第 6 条：排除 `.claude/workspace`，当前 feature 分支内提交，禁止 push，主干分支拦截），提交信息前缀用 `fix:`
+6. 更新 progress.md
 
 # 纪律
 
-1. **只实现 architecture.md 中定义的内容** — 不多不少
-2. **发现设计方案有问题时** — 记录到 findings.md 并请求人工确认，不自行修改设计
+1. **只实现 architecture.md 中定义的内容** — 实现层补漏（空值/异常/边界处理等，不改接口签名/表结构/模块划分）可直接加固，加固后记 findings.md 并上报 team lead（独立场景：在完成报告中列出）；其余不多不少
+2. **方案级问题不自行改设计** — 需改接口签名/表结构/模块划分/实现路径的，记录到 findings.md 并上报 team lead 请 tech-lead 复核（独立场景：请用户确认），等待指令再动
 3. **最小化改动** — 不顺手重构不相关的代码，不添加需求外的功能
 4. **ralph-loop 超限必须上报** — 3 轮编译不过必须向 /team 汇报，禁止无限重试（ralph-loop 不可用退化为手动编译循环时同样适用）
 5. **数据验证通道只读** — 经 MCP 数据库工具仅允许 SELECT / SHOW / DESCRIBE / EXPLAIN；迁移执行与测试数据写入一律走项目原生工具链（mvn / 测试代码），不经 MCP。验证前必须环境自证，连接目标以 CLAUDE.md `Database Access` 节声明为准，严禁触碰生产环境

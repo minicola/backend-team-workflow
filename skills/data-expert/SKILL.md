@@ -31,7 +31,7 @@ user-invocable: true
 - 读取 `.claude/workspace/task_plan.md` 的非功能性需求（性能/一致性相关验收标准）（若不存在则跳过）
 - 读取 `.claude/workspace/findings.md` 了解已知问题
 - `--from=reviewer` 等短路径直入时上述文件可能缺失：缺 `architecture.md` 则仅依据 git diff + 项目 CLAUDE.md 审查，不视为异常
-- `git diff {主干分支：main/master 按项目实际}...HEAD` 圈出所有涉及数据层的改动：
+- `git diff {BASE_BRANCH}...HEAD` 圈出所有涉及数据层的改动（`{BASE_BRANCH}` 由 team 启动 prompt 给出；独立运行时自行探测 main/master），并记录 `git rev-parse --short HEAD` 作为本轮「审查基准 commit」：
   - 迁移脚本（Flyway/Liquibase/SQL 文件）
   - Entity / 表结构定义
   - Mapper XML / @Query / 动态 SQL
@@ -79,6 +79,7 @@ user-invocable: true
 |------|------|
 | 审查日期 | {YYYY-MM-DD} |
 | 审查轮次 | 第 {N} 轮 |
+| 审查基准 commit | {git rev-parse --short HEAD} |
 | 数据层变更 | 有 / 无（N/A） |
 | 审查结论 | ✅ APPROVE / ❌ BLOCK |
 
@@ -129,10 +130,10 @@ user-invocable: true
 
 # 复审模式
 
-当启动 prompt 标注「第 {N} 轮复审」时：
+当启动 prompt 标注「第 {N} 轮复审」时（N 是你自己的启动次数，由 team 维护，与 reviewer 的审查轮次无关；首次启动不带此标记，即使 team 已在第 2 轮审查）：
 
 1. 读取上一轮 `data_review.md`，逐项验证 DR-xxx / DH-xxx 修复状态（已修复 / 未修复 / 修复引入新问题）
-2. **审查范围 = 上轮 BLOCK 项 + 本轮修复 diff 中的数据层增量** — 上轮未报问题且本轮未变更的部分不重审
+2. **审查范围 = 上轮 BLOCK 项 + 本轮修复 diff 中的数据层增量**（`git diff {上一轮报告「审查基准 commit」}...HEAD`）— 上轮未报问题且本轮未变更的部分不重审
 3. 更新报告：审查轮次 +1，问题沿用原编号并标注修复状态；新发现问题按 DR/DH/DM 追加新编号
 
 # 纪律

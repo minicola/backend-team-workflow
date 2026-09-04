@@ -18,7 +18,7 @@ argument-hint: <PRD文件路径或需求描述>
 1. **服务职责边界** — 查找"Service Responsibility Boundary"或"服务职责边界"章节
    - 提取本服务负责的业务域清单（✅ 部分）
    - 提取明确不负责的业务域清单（❌ 部分）
-   - 如果 CLAUDE.md 中没有此章节 → 向用户询问服务职责边界后再继续
+   - 如果 CLAUDE.md 中没有此章节 → 暂停，询问服务职责边界后再继续（若作为 team 成员运行：SendMessage 通知 team lead 转达用户，等待答复；独立调用直接问用户）
 
 2. **模块结构** — 查找"Module Structure"章节
    - 提取所有模块名称和职责，用于后续调研步骤

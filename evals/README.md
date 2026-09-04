@@ -27,7 +27,7 @@ claude plugin eval ~/claude-plugin/backend-team-workflow --json results.json --t
 - **skill 命名空间**：prompt.md 中使用 `/backend-team-workflow:team`。eval 以路径为 target 加载插件时，slash 前缀可能是 `/team`（无命名空间）——首跑若未触发 skill，把各 prompt.md 的前缀改为实际生效的形式。
 - **运行环境**：eval scaffold 目录默认为空（无 `.claude/workspace/`、无 git 历史），恰好构成 `--from=dev` 前置缺失的场景；若未来某 case 需要预置文件，用 `scaffold_script`（运行时需显式 `--scaffold`）。
 - **0.1b 环境门禁与 eval 的关系**：team SKILL 在 0.1 之后有「Agent Team 未启用即报错退出」的运行环境门禁（0.1b）。现有三个用例都在 0.0/0.1 就退出，**到不了 0.1b**，不受影响——门禁刻意排在参数/前置校验之后正是为了保住这三个场景的期望输出。未来若新增需要跑到 0.1b 之后的用例（如 0.2 脏工作区、0.3 主干保护），eval 沙箱默认没有 `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS`，必须在 case 环境或 scaffold 中显式设置该变量为 `1`，否则会先撞上门禁报错。
-- **用例扩展方向**（当前刻意未包含，避免真实启动团队的成本）：DATA_CHANGE 探测（Phase 5.0 grep 命中判定）、脏工作区三选一交互（0.2）、主干保护拦截（0.3）；以及需要完整团队运行才能触发的三个 v0.3.0 新机制——tech-lead 轻量/标准分流（评分 ≤6 单方案）、遗留必修项二选一（5.4 APPROVE 分支）、回归重试上限（5.4.2 同轮第二次回归失败即超限暂停）。
+- **用例扩展方向**（当前刻意未包含，避免真实启动团队的成本）：DATA_CHANGE 探测（Phase 5.0 grep 命中判定）、脏工作区三选一交互（0.2）、主干保护拦截与工作树洁净检查（0.3）、`--base` 非法分支报错（0.0）；以及需要完整团队运行才能触发的三个 v0.3.0 新机制——tech-lead 轻量/标准分流（评分 ≤6 单方案）、遗留必修项二选一（5.4 APPROVE 分支）、回归重试上限（5.4.2 同轮第二次回归失败即超限暂停）。
 
 ## 用例清单
 
