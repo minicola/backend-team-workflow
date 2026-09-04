@@ -13,9 +13,9 @@ argument-hint: <需求描述（直接编码时使用）>
 - **单人模式**：复杂度评分 ≤ 6，独立完成编码
 - **团队模式**：复杂度评分 > 6，升级为 dev-leader，组建 sub-dev 团队并行开发
 
-# 项目约束加载（第一步必做）
+# 项目约束加载
 
-执行任何编码前，**必须先读取当前项目根目录的 CLAUDE.md**，从中提取：
+编码前先读取当前项目根目录的 CLAUDE.md——编码决策的依据是目标项目的约定而非通用经验。从中提取：
 
 1. **Code Style** — 语言版本、编码、缩进、格式化工具
 2. **Package Conventions** — 基础包路径、各层级子包
@@ -27,7 +27,7 @@ argument-hint: <需求描述（直接编码时使用）>
 8. **AI 编码行为约束** — 项目特定的 AI 约束
 9. **Database Access**（可选） — dev/test 环境数据库只读通道声明（MCP 工具名、迁移执行方式、分片拓扑、环境自证锚点）。缺失时 Step 4.5 数据验证自动跳过
 
-**所有编码决策必须符合 CLAUDE.md 中的约束。若 CLAUDE.md 缺失 → 暂停，通知用户补充（若作为 team 成员运行：SendMessage 通知 team lead，由其暂停流程向用户求确认，等待转回的答复再继续）。**
+若 CLAUDE.md 缺失 → 暂停，通知用户补充（若作为 team 成员运行：SendMessage 通知 team lead，由其暂停流程向用户求确认，等待转回的答复再继续）。
 
 # 执行步骤
 
@@ -82,7 +82,7 @@ argument-hint: <需求描述（直接编码时使用）>
 | 数据模型变更 | 无 | 修改现有表 | 新增表或涉及分库分表 |
 | 领域事件 | 无 | 复用现有事件 | 新增事件链 |
 
-（"外部集成"类型和"模块数"上限根据 CLAUDE.md 中的实际项目情况解读）
+（与 tech-lead SKILL 3.1 同一张表，改动需同步；"外部集成"类型和"模块数"上限根据 CLAUDE.md 中的实际项目情况解读）
 
 **总分 ≤ 6 → 单人模式**（继续 Step 3A）
 **总分 > 6 → 团队模式**（继续 Step 3B）
@@ -123,7 +123,7 @@ argument-hint: <需求描述（直接编码时使用）>
 
 ```
 每个 sub-dev 的配置：
-- model: sonnet  # 固定枚举值，不接受 [1m] 等 context 后缀
+- model: sonnet
 - isolation: worktree（代码隔离）
 - prompt: 包含具体子任务描述 + 编码规范 + 模块约束
 ```
@@ -149,7 +149,7 @@ sub-dev 的 prompt 模板：
 使用 ralph-loop 迭代直到编译通过：
 - --max-iterations 3
 - --completion-promise "COMPILE PASS"
-如果 3 轮内编译未通过，停止并汇报错误详情。
+ralph-loop 不可用时退化为手动"编译 → 修错"循环，同样以 3 轮为上限。3 轮内编译未通过，停止并汇报错误详情。
 ```
 
 ### 3B.3 逐个合并
@@ -205,8 +205,8 @@ sub-dev 按完成顺序逐个合并到当前 feature 分支（dev 所在工作�
 
 当以清单驱动模式启动执行修复（team 流程 BLOCK 后启动，每次为新实例，不携带此前编码上下文），或独立场景下被要求按报告修复时：
 
-1. 读取 `.claude/workspace/test_report.md` 或 `.claude/workspace/review_report.md`；从 reviewer 阶段返回且 `.claude/workspace/data_review.md` 存在时，一并读取其数据层问题清单
-2. 只修复报告中标记的问题，**不做额外变更**（dev 自己实现，并做范围校验与本地复编译）
+1. 读取 `.claude/workspace/test_report.md` 或 `.claude/workspace/review_report.md`；从 reviewer 阶段返回且 `.claude/workspace/data_review.md` 存在时，一并读取其数据层问题清单。项目根 CLAUDE.md 必读；architecture.md / task_plan.md 若存在必读，歧义以 task_plan.md 为准；两者均不存在时（如 --from=reviewer 最短路径）以报告清单 + git diff 现状为准，仍有歧义则向 team lead（独立场景：用户）求裁决
+2. 只处理报告清单内的问题——含 Bug、未覆盖的验收标准、未实施的安全控制等报告指出的缺失实现——**不做额外变更**；清单外的代码即使有问题也只报告（SendMessage 给 team lead / 提示用户），不借机重构或加功能
 3. 修复后重新执行 Step 4（格式化 + 编译 + /simplify + code-simplifier）；若修复涉及数据变更，重跑 Step 4.5 数据验证
 4. 提交修复改动（同 Step 4 第 6 条：排除 `.claude/workspace`，当前 feature 分支内提交，禁止 push，主干分支拦截）
 5. 更新 progress.md
@@ -216,8 +216,6 @@ sub-dev 按完成顺序逐个合并到当前 feature 分支（dev 所在工作�
 1. **只实现 architecture.md 中定义的内容** — 不多不少
 2. **发现设计方案有问题时** — 记录到 findings.md 并请求人工确认，不自行修改设计
 3. **最小化改动** — 不顺手重构不相关的代码，不添加需求外的功能
-4. **每次修改前先读目标文件** — 理解上下文再动手
-5. **ralph-loop 超限必须上报** — 3 轮编译不过必须向 /team 汇报，禁止无限重试（ralph-loop 不可用退化为手动编译循环时同样适用）
-6. **目标驱动** — 开始前列出成功标准，执行中检查偏离，结束前验证达成
-7. **数据验证通道只读** — 经 MCP 数据库工具仅允许 SELECT / SHOW / DESCRIBE / EXPLAIN；迁移执行与测试数据写入一律走项目原生工具链（mvn / 测试代码），不经 MCP。验证前必须环境自证，连接目标以 CLAUDE.md `Database Access` 节声明为准，严禁触碰生产环境
-8. **人工前置未就绪不开工** — architecture.md「环境前置清单」中标注人工前置的条目（Nacos 配置、中间件资源等）未确认就绪前不进入编码；核对结果必须落 progress.md「环境前置」块
+4. **ralph-loop 超限必须上报** — 3 轮编译不过必须向 /team 汇报，禁止无限重试（ralph-loop 不可用退化为手动编译循环时同样适用）
+5. **数据验证通道只读** — 经 MCP 数据库工具仅允许 SELECT / SHOW / DESCRIBE / EXPLAIN；迁移执行与测试数据写入一律走项目原生工具链（mvn / 测试代码），不经 MCP。验证前必须环境自证，连接目标以 CLAUDE.md `Database Access` 节声明为准，严禁触碰生产环境
+6. **人工前置未就绪不开工** — architecture.md「环境前置清单」中标注人工前置的条目（Nacos 配置、中间件资源等）未确认就绪前不进入编码；核对结果必须落 progress.md「环境前置」块

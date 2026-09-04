@@ -12,9 +12,9 @@ user-invocable: true
 
 > **你是条件触发角色**：team 仅在本次变更涉及数据模型变更时才启动你。
 
-# 项目约束加载（第一步必做）
+# 项目约束加载
 
-执行审查前，**必须先读取当前项目根目录的 CLAUDE.md**，提取并内化：
+审查前先读取当前项目根目录的 CLAUDE.md——ORM、分库分表与 DDL 规定决定迁移与索引的审查口径。提取：
 
 1. **Tech Stack / External Integrations** — ORM（MyBatis/JPA 等）、分库分表中间件（ShardingSphere 等）、数据库类型与版本，决定迁移与索引审查口径
 2. **Module Structure / Package Conventions** — Entity / Mapper / Repository 所在模块与包，定位持久层代码

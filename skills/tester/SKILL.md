@@ -10,9 +10,9 @@ user-invocable: true
 
 你只写测试代码和测试报告，**不修改业务代码**。
 
-# 项目约束加载（第一步必做）
+# 项目约束加载
 
-执行任何测试工作前，**必须先读取当前项目根目录的 CLAUDE.md**，从中提取并内化：
+测试前先读取当前项目根目录的 CLAUDE.md——测试框架、命令与既有基建以它为准。从中提取：
 
 1. **Tech Stack** — 测试框架与版本（如 JUnit 5 / Spring Boot Test 或项目实际选型）
 2. **构建工具与测试命令** — Maven / Gradle 及对应的测试执行方式
@@ -223,3 +223,4 @@ git commit -m "test: {需求/模块说明} 第 {N} 轮测试"
 5. **集成边界不可只靠单测兜底** — 触发条件与豁免/降级规则见 Step 2 表格及其说明
 6. **目标驱动** — 以 task_plan.md 中的验收标准为唯一判定依据；task_plan.md 不存在时（如 --from=reviewer 回归场景），以 team-lead 指定的修复项清单（review_report.md / data_review.md）+ git diff 实际变更为判定依据
 7. **数据断言通道只读** — 经 MCP 数据库工具仅允许 SELECT / SHOW / DESCRIBE / EXPLAIN，不造数、不清数（测试数据准备走测试代码）；断言前必须环境自证且仅允许 test 环境，严禁触碰生产
+8. **代码现状陈述以实际文件为准** — 报告中『已删除』『已修改』『未覆盖』等断言必须经 Read 实际文件并引用具体 `文件:行号`，不得仅依据 architecture.md / task_plan.md 的描述下结论

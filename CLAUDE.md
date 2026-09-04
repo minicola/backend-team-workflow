@@ -103,14 +103,14 @@ team (编排，opus)
 9. **Git 提交纪律贯穿闭环**（team Phase 0.0/0.3、dev Step 4/修复模式、tester Step 5）
    team 启动时探测 `BASE_BRANCH`（main/master），主干上不执行任何提交类操作（0.3 拦截沿用主干）；dev 完成编码/修复、tester 产出测试代码后均在 feature 分支内提交（排除 `.claude/workspace`，禁止 push）；reviewer 纯只读开审，审查范围 = 已提交 diff + 未提交改动（正常流程下应为空，如有则并入范围并在报告标注来源待查）。workspace 不入库的主防线是 team 0.2 幂等写入 `.git/info/exclude`（独立 /dev 入口自行补齐）；提交命令中的 `:(exclude)` 是独立入口未经 0.2 时的兜底——**两层都不要随手删**。
 
-10. **数据验证通道（可选能力，2026-08-26 引入）**
+10. **数据验证通道（可选能力）**
    dev（Step 4.5 数据验证）与 tester（Step 4.5 数据断言）依赖目标项目 CLAUDE.md 的 `Database Access` 节声明：MCP 只读工具名（DBHub 多源命名 `execute_sql_{source_id}`，约定 source id 用 `dev` / `test`）、迁移执行方式、分片拓扑、环境自证锚点。三条不变量：
    - MCP 通道永远只读（SELECT/SHOW/DESCRIBE/EXPLAIN）；写操作（执行迁移、造测试数据）走项目原生工具链，不经 MCP
    - 验证/断言前必须环境自证（`SELECT @@hostname, DATABASE()` 对照锚点），严禁生产环境
    - 该节缺失或工具不可见时跳过并在 progress.md / test_report.md 标注原因，不阻塞流程
    目标项目配置模板见 `docs/20260826_database-access-setup.md`。改动节名、工具命名或不变量时要同步 dev、tester 两个 SKILL.md 与该模板。
 
-11. **环境前置清单（2026-08-28 引入）**
+11. **环境前置清单**
    tech-lead 的 architecture.md 模板固定含「环境前置清单」章节（Nacos 配置 / SQL / 中间件资源，每条标注初始化方式：**工作流内** = dev 编码阶段产出并经 Step 4.5 验证；**人工前置** = agent 无法自建，编码前须人工就绪）。**人工前置条目必须逐条附可直接复制执行的内容块与就绪核验**（完整 SQL / Nacos 配置全文 / 完整命令），禁止摘要式描述；Nacos 定位（namespace/group/dataId/key）须取自目标项目真实配置并与代码消费方一致，分片表 SQL 须按物理拓扑展开；未就绪上报与 team lead 展示时都原样携带内容块。dev Step 1 只核对人工前置项：SQL 类经 `Database Access` 只读通道执行条目自带的就绪核验语句，Nacos/中间件类向上确认；未就绪即暂停上报（/team 由 team lead 3.2 转人工确认）。`/dev` 直入时 dev 自写简版方案也必须含该章节。改动章节名、"工作流内/人工前置"语义或"可复制内容块"要求时要同步 tech-lead、dev、team 三个 SKILL.md。
 
 ## 已知陷阱
