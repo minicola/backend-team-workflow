@@ -76,7 +76,7 @@ team (编排，opus)
    改动文件名或目录会同时打破多个 skill，需要全局替换。
 
 2. **每个角色必读"目标项目"根目录的 CLAUDE.md**（注意：不是本仓库这份）
-   analyst / tech-lead / dev / tester / reviewer / data-expert 的 Step 1 都是「读取项目根 CLAUDE.md」，从中提取 `Service Responsibility Boundary` / `Module Structure` / `Layer Dependencies` / `Tech Stack` / `Package Conventions` / `Important Constraints` 等小节并据此决策（data-expert 侧重 `Tech Stack`/ORM/分库分表与 `Naming Conventions`；tester 侧重 `Tech Stack`/构建工具/测试约定，缺失时按 JUnit5+mvn 默认并在报告标注）。dev 与 tester 另读取可选的 `Database Access` 节（dev Step 4.5 数据验证、tester Step 4.5 数据断言，见约定 10）。新增角色或调整字段名时，要同步所有读取方。
+   analyst / tech-lead / dev / tester / reviewer / data-expert 的 Step 1 都是「读取项目根 CLAUDE.md」，从中提取 `Service Responsibility Boundary` / `Module Structure` / `Layer Dependencies` / `Tech Stack` / `Package Conventions` / `Important Constraints` 等小节并据此决策（data-expert 侧重 `Tech Stack`/ORM/分库分表与 `Naming Conventions`；tester 侧重 `Tech Stack`/构建工具/测试约定，缺失时按 JUnit5+mvn 默认并在报告标注）。dev 与 tester 另读取可选的 `Database Access` 节（dev Step 4.5 数据验证、tester Step 2.5 真实数据取样与 Step 4.5 数据断言，见约定 10）；tech-lead 与 dev 另读取可选的 `Nacos Access` 节（tech-lead Step 2 定位核对、dev Step 1 就绪核验，见约定 11）。新增角色或调整字段名时，要同步所有读取方。
 
 3. **frontmatter 调用控制字段（team 与角色不同，不要混淆）**
    - `team/SKILL.md` 保留 `user-invocable: true` + `disable-model-invocation: true`：编排入口只能由用户 `/team` 主动触发。
@@ -109,16 +109,21 @@ team (编排，opus)
    - MCP 通道永远只读（SELECT/SHOW/DESCRIBE/EXPLAIN）；写操作（执行迁移、造测试数据）走项目原生工具链，不经 MCP
    - 验证/断言前必须环境自证（`SELECT @@hostname, DATABASE()` 对照锚点），严禁生产环境
    - 该节缺失或工具不可见时跳过并在 progress.md / test_report.md 标注原因，不阻塞流程
-   目标项目配置模板见 `docs/20260826_database-access-setup.md`。改动节名、工具命名或不变量时要同步 dev、tester 两个 SKILL.md 与该模板。
+   tester 另有 Step 2.5 **真实数据取样**（**只开 tester，dev 刻意不开**）：以 test 库既有记录作为集成测试输入，额外依赖该节的「测试数据源」（运行时连 test 库才启用，隔离库 H2/Testcontainers 时跳过）与「测试数据标识」（不可回滚写入的识别与清理）两项声明。四条底线：不改既有记录、写入隔离可回收、PII 不落文件、断言相对结果；取样 ID 引用带运行时存在性前置，记录缺失记 skipped。取样触发不绑 `DATA_CHANGE`，但取样后 Step 4.5 数据断言随之触发。
+   目标项目配置模板见 `docs/20260826_database-access-setup.md`。改动节名、工具命名或不变量时要同步 dev、tester 两个 SKILL.md 与该模板；「测试数据源」「测试数据标识」两项只有 tester 与模板两个读写方。
 
 11. **环境前置清单**
-   tech-lead 的 architecture.md 模板固定含「环境前置清单」章节（Nacos 配置 / SQL / 中间件资源，每条标注初始化方式：**工作流内** = dev 编码阶段产出并经 Step 4.5 验证；**人工前置** = agent 无法自建，编码前须人工就绪）。**人工前置条目必须逐条附可直接复制执行的内容块与就绪核验**（完整 SQL / Nacos 配置全文 / 完整命令），禁止摘要式描述；Nacos 定位（namespace/group/dataId/key）须取自目标项目真实配置并与代码消费方一致，分片表 SQL 须按物理拓扑展开；未就绪上报与 team lead 展示时都原样携带内容块。dev Step 1 只核对人工前置项：SQL 类经 `Database Access` 只读通道执行条目自带的就绪核验语句，Nacos/中间件类向上确认；未就绪即暂停上报（/team 由 team lead 3.2 转人工确认）。`/dev` 直入时 dev 自写简版方案也必须含该章节。改动章节名、"工作流内/人工前置"语义或"可复制内容块"要求时要同步 tech-lead、dev、team 三个 SKILL.md。
+   tech-lead 的 architecture.md 模板固定含「环境前置清单」章节（Nacos 配置 / SQL / 中间件资源，每条标注初始化方式：**工作流内** = dev 编码阶段产出并经 Step 4.5 验证；**人工前置** = agent 无法自建，编码前须人工就绪）。**人工前置条目必须逐条附可直接复制执行的内容块与就绪核验**（完整 SQL / Nacos 配置全文 / 完整命令），禁止摘要式描述；Nacos 定位（namespace/group/dataId/key）须取自目标项目真实配置并与代码消费方一致，分片表 SQL 须按物理拓扑展开；未就绪上报与 team lead 展示时都原样携带内容块。dev Step 1 只核对人工前置项：SQL 类经 `Database Access` 只读通道执行条目自带的就绪核验语句，Nacos 类经 `Nacos Access` 只读通道执行就绪核验命令（节缺失退回向上确认），中间件类向上确认；未就绪即暂停上报（/team 由 team lead 3.2 转人工确认）。`/dev` 直入时 dev 自写简版方案也必须含该章节。改动章节名、"工作流内/人工前置"语义或"可复制内容块"要求时要同步 tech-lead、dev、team 三个 SKILL.md。
+   **Nacos 只读通道（可选，与 Database Access 平行）**：目标项目 CLAUDE.md `Nacos Access` 节声明只读读取命令模板、dev/test 的 server 与 namespace 映射、鉴权与准备步骤（实现不限：curl Open API / 官方 nacos-cli `config get`，命令写死在节里，skill 只引用）。tech-lead Step 2 用它核对定位并决定「新建 / 编辑已有」，dev Step 1 用它核验就绪，team 3.2 展示未就绪项时附核验结果（不回显整份配置，Nacos 里常有密钥）。不变量：通道只读（严禁经通道发布 / 修改 / 删除配置），Nacos 配置初始化保持人工前置不改为「工作流内」；节内禁止生产地址，命令中的 server / namespace 逐字取自节声明。模板见 `docs/20260914_nacos-access-setup.md`。改动节名或不变量时同步 tech-lead、dev、team 与该模板。
 
 12. **architecture.md 的「可观测性设计」「灰度与回滚预案」有下游消费者**
    reviewer 按「可观测性设计」核对代码落地（未落地 HIGH），team 6.0 按「灰度与回滚预案」填上线工单。tech-lead 模板与 `/dev` 简版方案都固定含这两节（不涉及写"无"）；改章节名要同步 tech-lead、dev、reviewer、team 四处。`DATA_CHANGE` 同理只有一个口径：dev Step 4.5 在 progress.md「数据验证」块首行写 `DATA_CHANGE=true/false`，team 5.0 与 tester 4.5 都以它为输入之一。
 
 13. **修复实例的上报通路（team「修复实例上报处理」节 + dev 修复模式第 3 条）**
    Phase 4/5 的 dev 修复实例遇到「方案级问题」上报后由 team 启 tech-lead 纠偏，「争议项」（如测试用例本身错误）由 team lead 裁决、tester 下一轮修正用例；清单全部裁决跳过时 AWAIT dev 不再要求新提交。不要删掉这两条通路换回「dev 只能硬改或等超时」。
+
+14. **拒绝防御式编码是 dev 与 reviewer 共用的一份清单**（dev/SKILL.md「编码原则」+ Step 4 第 4 条自查 + 纪律 1/7、sub-dev prompt 模板内联；reviewer/SKILL.md Step 2 HIGH「防御式编码」组 + 报告「防御式编码扫描」表 + 纪律 6；team/SKILL.md 3.2 dev 启动 prompt 第 1 条的加固边界）
+   口径：边界校验一次、内部信任契约、错误显式向上传播；每段容错逻辑必须能指出 architecture.md 失败路径设计或项目 CLAUDE.md 依据（dev 在 findings.md 记「容错依据」，reviewer 逐条核实）。五类禁止项中吞异常 / 静默兜底按 HIGH BLOCK，冗余判空 / 投机性弹性 / 过度断言为 HIGH〔规范类〕（搭车修复或遗留必修项，不单独烧一轮）。dev 纪律 1 的"实现层补漏"只许补系统边界，不是给内部调用链加判空的许可；reviewer 的修复建议不得是"补一层判空/try-catch"。增删类别或改分级要同步 dev（含 sub-dev 模板）、reviewer 与 team 3.2 三处。
 
 ## 已知陷阱
 

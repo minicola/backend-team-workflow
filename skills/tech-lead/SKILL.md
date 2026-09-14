@@ -45,6 +45,9 @@ user-invocable: true
 7. **项目禁止事项** — 查找"Important Constraints"章节
    - 方案不得包含其中禁止的做法
 
+8. **Nacos Access**（可选） — Nacos 只读读取命令模板与 dev/test 的 server / namespace 映射
+   - 供 Step 2 核对现网配置定位（namespace / group / dataId / 现有 key）与「环境前置清单」Nacos 条目的就绪核验命令；缺失时定位只能从 bootstrap.yml 推断并标注「未经现网核对」
+
 如果 CLAUDE.md 缺失或信息不完整 → 暂停，通知用户补充后再继续（若作为 team 成员运行：SendMessage 通知 team lead，由 team lead 暂停流程并向用户求确认，等待转回的答复再继续）。
 
 # 执行步骤（方案设计模式）
@@ -64,6 +67,7 @@ user-invocable: true
 - 相关的领域服务、BO、Entity
 - 现有接口和数据模型
 - 可复用的组件
+- 涉及 Nacos 配置时的现网定位核对：`Nacos Access` 节存在 → 先执行节内声明的准备步骤（source 凭证 / 登录取 token），再经其只读读取命令 GET 目标 dataId（命令中的 server / namespace 逐字取自节声明，禁止手拼），确认 namespace / group / dataId 是否已存在、现有 key 结构与格式；已存在的前置项写「编辑已有配置，在 {锚点} 之后插入」，不存在的才写「新建配置」。节缺失 → 沿用 bootstrap.yml 推断，前置项标注「定位未经现网核对」
 - 将增量分析追加到 `.claude/workspace/findings.md`（按文件头声明的条目格式）
 
 ## Step 3: 复杂度评分与方案设计（标准/轻量分流）
@@ -206,7 +210,13 @@ user-invocable: true
 {完整配置内容：新建给全文；追加给完整片段，父级 key 不省略}
 ```
 
-- 就绪核验：{确认方式，如：控制台确认 dataId 存在且含 key `xxx`}
+- 就绪核验（`Nacos Access` 节存在时 dev 经只读通道直接执行；节缺失时改写控制台检查点）：
+
+```bash
+{取自 Nacos Access 节命令模板、填入上方定位的完整读取命令}
+```
+
+  期望：输出含 key `{xxx}`{，且值为 {yyy}}；HTTP 404 / 缺 key / 值不符均为未就绪
 
 #### 前置项 {#}：SQL {表名或用途}
 - 目标库：{库名}（{dev/test}），执行方式：{直连执行 | DBA 工单}
@@ -284,3 +294,4 @@ USE {库名};
 4. **方案对比必须客观** — 列出每个方案的真实优劣，不偏向预设结论；轻量模式单方案时，免对比理由必须真实成立，不得为省流程虚构"唯一路径"（发现实质分叉即升级回标准模式）
 5. **方案产出前必过缺口审查** — Step 4 八个维度逐项走查，能补的当场补进方案，不能定的列为开放问题随摘要提交用户，**不得隐藏未决项以求方案"看起来完整"**
 6. **方案级纠偏必须回写 architecture.md** — 纠偏中若发生接口签名/表结构/模块划分/实现路径等方案级修正，必须同步更新 architecture.md 对应小节并在 findings.md 注明；仅执行层偏离不改 architecture.md
+7. **Nacos 通道只读、配置初始化保持人工前置** — `Nacos Access` 通道仅用于读取核对，严禁经通道发布 / 修改 / 删除配置；Nacos 条目的初始化方式固定为人工前置，不因通道存在改为「工作流内」

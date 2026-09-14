@@ -115,7 +115,7 @@ dev 的 Agent() 启动 prompt 分两种模式。dev 不跨阶段存活：Phase 3
 你是开发团队的后端开发工程师。执行 /dev 技能。读取 .claude/workspace/architecture.md 实现编码。{需求补充}每完成一个模块通知 team lead 进度。
 
 **改动纪律**：
-1. architecture.md 的盲区按 /dev 技能纪律 1、2 处理：实现层补漏（不改接口签名/表结构/模块划分）可直接加固，加固后**立即 SendMessage 给 team-lead 报告**（发现的问题 + 修复方式）；方案级问题不要自行改设计，记 findings.md 并在报告中标「需要 tech-lead 复核」
+1. architecture.md 的盲区按 /dev 技能纪律 1、2、7 处理：实现层补漏仅限**系统边界**校验或失败路径（对外入参 / 外部响应 / 可空列，不改接口签名/表结构/模块划分）可直接加固，加固后**立即 SendMessage 给 team-lead 报告**（发现的问题 + 修复方式）；内部调用链不加判空 / try-catch / 默认值兜底（/dev「编码原则：拒绝防御式编码」）；方案级问题不要自行改设计，记 findings.md 并在报告中标「需要 tech-lead 复核」
 2. 完成全部编码并提交后通知 team lead，等待 shutdown_request。后续测试/审查发现的问题由新的 dev 实例按报告清单修复，你不需要待命
 ```
 
@@ -427,7 +427,7 @@ dev 报告模块完成时，检查 findings.md。**偏离判定标准（命中�
 
 **环境前置未就绪处理：**
 dev 开工前核对 architecture.md「环境前置清单」后报告存在未就绪的人工前置项（Nacos 配置、中间件资源等）：
-- 将未就绪条目**连同其可直接复制执行的内容块**（完整 SQL / Nacos 配置全文 / 完整命令，来自 architecture.md 清单明细或 dev 上报消息）原样展示给用户，等待人工初始化——不要转述成摘要
+- 将未就绪条目**连同其可直接复制执行的内容块**（完整 SQL / Nacos 配置全文 / 完整命令，来自 architecture.md 清单明细或 dev 上报消息）原样展示给用户，等待人工初始化——不要转述成摘要；Nacos 类条目一并附 dev 经 `Nacos Access` 通道的核验结果（404 / 缺 key / 值不符，不含整份配置内容），让用户知道差在哪
 - 用户确认就绪后 → SendMessage 通知 dev 继续
 
 **ralph-loop 超限处理：**
