@@ -45,13 +45,13 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 > **API 版本红线（v2.1.178 起）**：`TeamCreate` 与 `TeamDelete` **已被移除**，`Agent` 的 `team_name` 入参**已废弃且被忽略**。当前语义是「每会话唯一隐式团队」：团队名由会话 ID 派生（`session-{前8位}`）不可指定，`Agent(...)` 带 `name` 即自动成为 teammate，会话退出时团队目录自动清理。另需 `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1` 才启用 teammate（否则退化为普通 subagent，双向通信与召回全部失效），team/SKILL.md Phase 0.1b 有门禁探测（刻意排在 0.0/0.1 参数与前置校验之后——用户输入类报错优先，且不改变 evals 三个 Phase 0 场景的期望输出）。改动流程时**不要再写回这几个已移除的工具**。
 
 ```
-team (编排，opus)
- ├─ Phase 1: analyst      (opus,   仅 Phase 1)
- ├─ Phase 2: tech-lead    (opus,   Phase 2 方案确认后关闭；Phase 3 纠偏时按需重启新实例，即用即关)
+team (编排，fable)
+ ├─ Phase 1: analyst      (fable,  仅 Phase 1)
+ ├─ Phase 2: tech-lead    (fable,  Phase 2 方案确认后关闭；Phase 3 纠偏时按需重启新实例，即用即关)
  ├─ Phase 3: dev          (sonnet, Phase 3 编码提交后关闭；Phase 4/5 BLOCK 时按需重启新实例（清单驱动模式），即用即关)
  ├─ Phase 4: tester       (sonnet, 每轮重启 — 不跨轮复用)
- └─ Phase 5: reviewer     (sonnet, 每轮重启 — 不跨轮复用，纯只读审查)
-     └─ data-expert       (sonnet, 条件触发：仅当变更涉及数据模型时，与 reviewer 并行启动（均为纯只读审查），每轮重启)
+ └─ Phase 5: reviewer     (opus,   每轮重启 — 不跨轮复用，纯只读审查)
+     └─ data-expert       (opus,   条件触发：仅当变更涉及数据模型时，与 reviewer 并行启动（均为纯只读审查），每轮重启)
 ```
 
 理解整体协作必须把 `skills/team/SKILL.md` 当作"主控代码"读：它是唯一驱动所有阶段切换、生命周期管理、闭环判定的逻辑。其余 6 个 skill 只是被它通过 `Agent(...)` 启动并通过 `SendMessage` 召回 / 关停的子角色。
