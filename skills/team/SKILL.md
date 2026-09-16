@@ -23,14 +23,14 @@ argument-hint: "[--from=<phase>] [--base=<branch>] [<需求描述或PRD路径>]�
 
 | 角色 | name | 模型 | 生命周期 | 关闭时机 |
 |------|------|------|---------|---------|
-| 需求分析师 | analyst | opus | Phase 1 | Phase 1 完成后 shutdown |
-| 技术负责人 | tech-lead | opus | Phase 2 | Phase 2 方案确认后 shutdown；Phase 3 纠偏时按需重启（纠偏模式，即用即关） |
+| 需求分析师 | analyst | fable | Phase 1 | Phase 1 完成后 shutdown |
+| 技术负责人 | tech-lead | fable | Phase 2 | Phase 2 方案确认后 shutdown；Phase 3 纠偏时按需重启（纠偏模式，即用即关） |
 | 后端开发 | dev | sonnet | Phase 3 | Phase 3 编码提交后 shutdown；Phase 4/5 BLOCK 时按需重启（清单驱动模式，即用即关） |
 | 测试工程师 | tester | sonnet | Phase 4-5 | 每轮测试完成后 shutdown，下轮重新启动 |
-| 代码审核员 | reviewer | sonnet | Phase 5 | 每轮审查完成后 shutdown，下轮重新启动 |
-| 数据治理审查员 | data-expert | sonnet | Phase 5（**条件触发**） | 与 reviewer 同轮启关：每轮审查完成后 shutdown |
+| 代码审核员 | reviewer | opus | Phase 5 | 每轮审查完成后 shutdown，下轮重新启动 |
+| 数据治理审查员 | data-expert | opus | Phase 5（**条件触发**） | 与 reviewer 同轮启关：每轮审查完成后 shutdown |
 
-> `model` 取 Agent 工具的枚举值（`sonnet` / `opus` 等），不带任何后缀。
+> `model` 取 Agent 工具的枚举值（`sonnet` / `fable` 等），不带任何后缀。
 
 > **data-expert 是条件触发成员**：仅当本次变更涉及数据模型（建表/改表/迁移脚本/索引/分库分表）时，team 才在 Phase 5 启动它——与 reviewer 同时并行启动（两者均为纯只读审查，无视图漂移风险）；其结论并入 Phase 5 的 BLOCK/APPROVE 判定。判定是否触发的方法见 Phase 5.0（每轮探测）。无数据层变更（且后续轮未引入数据变更）的任务不启动 data-expert，不增加成本。
 
@@ -331,7 +331,7 @@ Phase 0.2 写入格式头后，紧接着追加进度表骨架；仅列出从 STA
 
 Agent(
   name: "analyst",
-  model: opus,
+  model: fable,
   prompt: "你是开发团队的需求分析师。执行 /analyst 技能。需求输入：{去除 --from 参数后的需求文本}。完成后将 task_plan.md 写入 .claude/workspace/，然后通知 team lead。"
 )
 ```
@@ -362,7 +362,7 @@ SendMessage(to: "analyst", message: {"type": "shutdown_request"})
 
 Agent(
   name: "tech-lead",
-  model: opus,
+  model: fable,
   prompt: "你是开发团队的技术负责人。执行 /tech-lead 技能（方案设计模式）。读取 .claude/workspace/task_plan.md 进行技术方案设计。{需求补充}完成后通知 team lead。"
 )
 ```
@@ -413,7 +413,7 @@ dev 报告模块完成时，检查 findings.md。**偏离判定标准（命中�
   ```
   Agent(
     name: "tech-lead",
-    model: opus,
+    model: fable,
     prompt: "你是开发团队的技术负责人。执行 /tech-lead 技能（纠偏模式）。dev 在 {模块} 偏离了技术方案，偏离详情：{内容}。读取 .claude/workspace/architecture.md 给出修正指令并追加到 findings.md，完成后通知 team lead。"
   )
   ```
@@ -569,7 +569,7 @@ git diff {BASE_BRANCH}...HEAD --name-only | grep -vE '(^|/)src/test/' | grep -E 
 ```
 Agent(
   name: "reviewer",
-  model: sonnet,
+  model: opus,
   prompt: "你是开发团队的代码审核员。执行 /reviewer 技能{当前轮次 > 1 ? '（第 {N} 轮复审）' : ''}。审查当前代码变更（纯只读，不修改任何代码）；BASE_BRANCH={BASE_BRANCH}。{需求补充}完成后通知 team lead。"
 )
 ```
@@ -578,7 +578,7 @@ Agent(
 ```
 Agent(
   name: "data-expert",
-  model: sonnet,
+  model: opus,
   prompt: "你是开发团队的数据治理审查员。执行 /data-expert 技能{data-expert 启动次数 > 1 ? '（第 {data-expert 启动次数} 轮复审）' : ''}。审查本次变更的数据层部分（迁移/表结构/索引/Mapper/分片），产出 data_review.md；BASE_BRANCH={BASE_BRANCH}。完成后通知 team lead。"
 )
 ```
