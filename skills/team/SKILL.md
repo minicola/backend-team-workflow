@@ -46,7 +46,7 @@ argument-hint: "[--from=<phase>] [--base=<branch>] [<需求描述或PRD路径>]�
 | `tester` | — | — | **按需启动**（BLOCK 时清单驱动模式） | P4 每轮启关 | 每轮启关 |
 | `reviewer` | — | — | **按需启动**（BLOCK 时清单驱动模式） | **按需启动**（reviewer BLOCK 后回归） | P5 每轮启关 |
 
-> 「按需启动/重启」= 每次都用 `Agent(...)` 启动新实例，任务完成（纠偏指令给出 / 修复提交）后立即 shutdown，不跨阶段待命。同名重启前必须确认前一实例已 shutdown_approved（本任务内首次启动无此等待）。
+> 「按需启动/重启」= 每次都用 `Agent(...)` 启动新实例，任务完成（纠偏指令给出 / 修复提交）后立即 shutdown，不跨阶段待命。同名重启前必须 `CONFIRM_SHUTDOWN` 前一实例（见「关闭成员」节；本任务内首次启动无此核对）。
 
 > **data-expert 不进上表的固定生命周期**：独立于 START_PHASE，所有路径（含 `--from=reviewer` 一次 APPROVE 的最短路径）进入 Phase 5 时先跑 5.0 探测（每轮执行），触发与启停规则见上方成员配置表下说明及 Phase 5.0。
 
@@ -61,7 +61,7 @@ argument-hint: "[--from=<phase>] [--base=<branch>] [<需求描述或PRD路径>]�
 
 各 Phase 的所有「等待 X 完成」一律按本协议执行，**判据是产物、不是通知**：
 
-1. **触发**：收到该成员的 idle 通知（"X is idle"）或其主动 SendMessage 报告 → 进入第 2 步。**不要因为没收到通知就一直空等**——通知只是加速信号，缺失不影响判定。
+1. **触发**：收到该成员的 idle 通知（"X is idle"）或其主动 SendMessage 报告 → 进入第 2 步。**不要因为没收到通知就一直空等**——通知只是加速信号，缺失不影响判定。能唤醒空闲 lead 的只有成员的显式 SendMessage 报告（各启动 prompt 已要求「完成后通知 team lead」）与用户输入；idle 通知和关闭回执一样只在 lead 活跃时送达。
 2. **验收判据**：读取该成员的产物文件，同时满足两条才算完成：
    - 文件存在且非空
    - 内容完整——具备该产物的**结论性章节**（判据见各 Phase 的 `AWAIT` 标注），而非写到一半的半截文件
@@ -74,7 +74,7 @@ argument-hint: "[--from=<phase>] [--base=<branch>] [<需求描述或PRD路径>]�
 
 **技能加载方式**：本插件 6 个角色 skill（analyst / tech-lead / dev / tester / reviewer / data-expert）均不带 `disable-model-invocation`（见仓库 CLAUDE.md 约定 3），各 Phase 的 Agent() prompt 中『执行 /X 技能』经 Skill 工具直接生效，无需任何路径替换。/simplify、code-simplifier、ralph-loop 等外部技能的可用性按各角色 SKILL 声明的降级路径处理。
 
-**启动同名新一轮成员前必须确认前一轮已收到 `shutdown_approved`**（系统通知 "X has shut down"）。否则同名冲突的系统行为（latest-wins 抢占或自动加 `-2`/`-3` 后缀，随版本而异）都会造成成员定位混乱——旧实例可能仍在消耗 token 却无人管理。
+**启动同名新一轮成员前必须先 `CONFIRM_SHUTDOWN(该 name)`**（见「关闭成员」节），确认前一轮已从 ListAgents 消失。否则同名冲突的系统行为（latest-wins 抢占或自动加 `-2`/`-3` 后缀，随版本而异）都会造成成员定位混乱——旧实例可能仍在消耗 token 却无人管理。
 
 ## 关闭成员（shutdown 协议，不可省略任何一步）
 
@@ -85,9 +85,11 @@ SendMessage(
 )
 ```
 
-1. **发送 shutdown_request 后必须等待 `shutdown_approved` 响应**（系统通知 "X has shut down"）
-2. 收到 shutdown_approved 才算真正关闭，可以推进流程
-3. **shutdown 可能很慢**：teammate 会先做完当前请求或工具调用才响应关闭，等待属正常。等待超过 60 秒未响应 → 标记为**孤儿候选**，记录到 findings.md，并立即执行下一条的强制回收
+1. **发出即推进，不等回执**：SendMessage 返回成功后，在台账追加「shutdown_request 已发」一行，立即执行下一步动作（启动不同名成员、进入下一 Phase 等）。
+2. **回执不会唤醒 lead**：成员批准关闭后，系统投递的 `teammate_terminated`（"X has shut down"）通知**只在 lead 正在跑回合时送达**；lead 若结束回合空等，它不会触发新回合，流程会停到用户手动输入为止。因此**禁止写「收到 shutdown_approved 后再继续」然后结束回合**。该通知常与成员更早的 idle 通知捆绑延后送达，收到时也不要当作实时信号。
+3. **只有两处需要确认成员已关闭**——启动同名新一轮成员之前（纪律 9）与 6.1 收尾核对，一律用主动核对 **`CONFIRM_SHUTDOWN(成员)`**，在同一回合内执行完、不结束回合：
+   - `ListAgents` → 该 name 不在 Teammates 列表 → 已关闭，台账追加「确认关闭」一行，返回
+   - 仍在列表 → Bash `sleep 15` 后重新 `ListAgents`（teammate 会先做完当前工具调用才响应关闭，等待属正常）；自 shutdown_request 发出起累计超过 **60 秒**仍在列表 → 标记为**孤儿候选**，记录到 findings.md，立即执行下一条的强制回收
 4. **强制回收（孤儿候选的唯一正解）**：对超时未响应的成员调用
 
    ```
@@ -95,13 +97,13 @@ SendMessage(
    ```
 
    `TaskStop` 接受 teammate 的 bare name 或 `name@team` 形式的 agent ID。回收结果（成功/失败）记入 findings.md。**只有 TaskStop 能真正终止一个 teammate**——它是 in-process 运行的，`kill <PID>` 无从下手（见 6.5）。
-5. **孤儿脱困**：成员被标记孤儿候选且 TaskStop 回收失败后，不再等待其 shutdown_approved；下一轮直接同名启动。同名冲突的系统行为按实际观察适配（不同版本二选一）：
+5. **孤儿脱困**：成员被标记孤儿候选且 TaskStop 回收失败后，不再对其 `CONFIRM_SHUTDOWN`；下一轮直接同名启动。同名冲突的系统行为按实际观察适配（不同版本二选一）：
    - **latest-wins（当前版本默认）**：名字指向最新实例，后续 SendMessage / TaskStop 用原名即可，旧实例改用其 spawn 结果中的 agentId 定位
    - **自动改名**（如 `tester-2`）：新名字记入 findings.md 并在后续 SendMessage / TaskStop 中一律使用
 
    无论哪种，把「旧实例标识 + 新实例标识」都记入 findings.md，供 6.5 回收核对逐一处理；两种行为都未出现（启动被拒）则暂停请求人工
 
-**规则**：成员完成当前阶段任务后，**team 必须立即向其发送 shutdown_request**；下一步动作（如启动新轮成员、进入 Phase 6）必须在 shutdown_approved 或 TaskStop 回收之后执行。
+**规则**：成员完成当前阶段任务后，**team 必须立即向其发送 shutdown_request**，记台账后直接推进；不得为等待回执结束回合。同名重启前与 6.1 收尾按 `CONFIRM_SHUTDOWN` 核对。
 
 ## dev 启动 prompt 模板（两种模式）
 
@@ -314,10 +316,10 @@ Phase 0.2 写入格式头后，紧接着追加进度表骨架；仅列出从 STA
 **成员实例台账**
 | 时间 | name | 事件 | 备注 |
 |---|---|---|---|
-| {HH:MM} | {name} | Agent() 启动 / shutdown_approved / TaskStop 回收 | {Phase、模式、Agent 结果中的用量（如有）} |
+| {HH:MM} | {name} | Agent() 启动 / shutdown_request 已发 / 确认关闭 / TaskStop 回收 | {Phase、模式、Agent 结果中的用量（如有）} |
 ```
 
-规则：后文所有轮次、计数、DATA_CHANGE 的变更**同步改写运行状态块**；每次 `Agent()` 启动、收到 shutdown_approved、执行 TaskStop 各在台账追加一行。上下文被压缩后，一律以这两个块为准恢复状态与成员清单；6.1 的回收核对以台账为唯一来源。
+规则：后文所有轮次、计数、DATA_CHANGE 的变更**同步改写运行状态块**；每次 `Agent()` 启动、发出 shutdown_request、`CONFIRM_SHUTDOWN` 确认关闭、执行 TaskStop 各在台账追加一行。上下文被压缩后，一律以这两个块为准恢复状态与成员清单；6.1 的回收核对以台账为唯一来源。
 
 ---
 
@@ -409,7 +411,7 @@ dev 报告模块完成时，检查 findings.md。**偏离判定标准（命中�
 
 仅是方案内的盲区加固且 dev 未请求复核 → 记录 findings.md，不触发纠偏。
 
-- 发现偏离 → 先 `SendMessage(to: "dev", message: "暂停 {模块} 的改动并停止对其提交，等待 tech-lead 纠偏指令；其他模块可继续。")`，再按需启动 tech-lead 纠偏（tech-lead 不跨阶段存活，每次纠偏都是新实例；前置：若本任务已有过 tech-lead 实例，确认其已 shutdown_approved）；纠偏指令给出后立即发 shutdown_request：
+- 发现偏离 → 先 `SendMessage(to: "dev", message: "暂停 {模块} 的改动并停止对其提交，等待 tech-lead 纠偏指令；其他模块可继续。")`，再按需启动 tech-lead 纠偏（tech-lead 不跨阶段存活，每次纠偏都是新实例；前置：若本任务已有过 tech-lead 实例，`CONFIRM_SHUTDOWN(tech-lead)`）；纠偏指令给出后立即发 shutdown_request：
   ```
   Agent(
     name: "tech-lead",
@@ -468,7 +470,7 @@ SendMessage(to: "dev", message: {"type": "shutdown_request"})
 
 #### 4.1 启动 tester 成员
 
-**前置**：如非首轮，确认前一轮 tester 已收到 shutdown_approved（避免同名冲突，见纪律 9）。
+**前置**：如非首轮，`CONFIRM_SHUTDOWN(tester)`（避免同名冲突，见纪律 9）。
 
 ```
 Agent(
@@ -505,7 +507,7 @@ SendMessage(to: "tester", message: {"type": "shutdown_request"})
 
   **IF 当前测试轮次 = 3（已是最后一轮）→ 不再召回 dev，直接转「超限暂停」分支。**
 
-  启动 dev 修复（统一路径：dev 不跨阶段存活，每次修复都是模式 B 新实例；前置：若本任务已有过 dev 实例，确认其已 shutdown_approved）：
+  启动 dev 修复（统一路径：dev 不跨阶段存活，每次修复都是模式 B 新实例；前置：若本任务已有过 dev 实例，`CONFIRM_SHUTDOWN(dev)`）：
   ```
   Agent(
     name: "dev",
@@ -515,12 +517,12 @@ SendMessage(to: "tester", message: {"type": "shutdown_request"})
   ```
 
   → `AWAIT(dev, 判据: `git log {BASE_BRANCH}..HEAD` 出现本轮新提交 AND progress.md 记录了本轮修复项；争议项全部裁决跳过的例外见「修复实例上报处理」)`，期间 dev 的「方案级问题 / 争议项」上报按「修复实例上报处理」节处理
-  → 立即关闭 dev（等待 shutdown_approved）：
+  → 立即关闭 dev（发出即推进，不等回执）：
   ```
   SendMessage(to: "dev", message: {"type": "shutdown_request"})
   ```
   → 当前测试轮次 += 1
-  → IF 当前测试轮次 ≤ 3 → 回到 4.1 启动新的 tester 实例（前置：确认前一轮 tester 已 shutdown_approved）；ELSE → 转「超限暂停」
+  → IF 当前测试轮次 ≤ 3 → 回到 4.1 启动新的 tester 实例（前置：`CONFIRM_SHUTDOWN(tester)`）；ELSE → 转「超限暂停」
 
 **超限暂停（测试轮次耗尽）：**
   → **暂停**，展示 Bug 变化趋势和 findings.md，请求人工介入。请选择：
@@ -582,7 +584,7 @@ Agent(
   prompt: "你是开发团队的数据治理审查员。执行 /data-expert 技能{data-expert 启动次数 > 1 ? '（第 {data-expert 启动次数} 轮复审）' : ''}。审查本次变更的数据层部分（迁移/表结构/索引/Mapper/分片），产出 data_review.md；BASE_BRANCH={BASE_BRANCH}。完成后通知 team lead。"
 )
 ```
-> 前置（非首轮）：确认前一轮 data-expert 已 shutdown_approved（避免同名冲突，见纪律 9）。
+> 前置（非首轮）：`CONFIRM_SHUTDOWN(data-expert)`（避免同名冲突，见纪律 9）。
 
 #### 5.2 等待审查完成
 
@@ -594,7 +596,7 @@ Agent(
 两份都达标后才进入 5.3；任一未达标时按 `AWAIT` 第 3 步处理该成员，**不影响**另一成员的已达标结论。
 
 #### 5.3 关闭本轮审查成员
-无论结果如何，当轮成员完成后立即关闭（各自等待 shutdown_approved）：
+无论结果如何，当轮成员完成后立即关闭（发出即推进，不等回执；下一轮 5.1 同名重启前再 `CONFIRM_SHUTDOWN`）：
 ```
 SendMessage(to: "reviewer", message: {"type": "shutdown_request"})
 ```
@@ -621,7 +623,7 @@ SendMessage(to: "data-expert", message: {"type": "shutdown_request"})
 
   ### 5.4.1 召回 dev 修复
 
-  启动 dev 修复（统一路径：dev 不跨阶段存活，每次修复都是模式 B 新实例；前置：若本任务已有过 dev 实例，确认其已 shutdown_approved）：
+  启动 dev 修复（统一路径：dev 不跨阶段存活，每次修复都是模式 B 新实例；前置：若本任务已有过 dev 实例，`CONFIRM_SHUTDOWN(dev)`）：
   ```
   Agent(
     name: "dev",
@@ -631,7 +633,7 @@ SendMessage(to: "data-expert", message: {"type": "shutdown_request"})
   ```
 
   → `AWAIT(dev, 判据: `git log {BASE_BRANCH}..HEAD` 出现本轮新提交 AND progress.md 记录了本轮修复项（含 data_review.md 清单项，若本轮启用）；争议项全部裁决跳过的例外见「修复实例上报处理」)`，期间 dev 的「方案级问题 / 争议项」上报按「修复实例上报处理」节处理
-  → 立即关闭 dev（等待 shutdown_approved）：
+  → 立即关闭 dev（发出即推进，不等回执）：
   ```
   SendMessage(to: "dev", message: {"type": "shutdown_request"})
   ```
@@ -639,10 +641,10 @@ SendMessage(to: "data-expert", message: {"type": "shutdown_request"})
   ### 5.4.2 修复后必须经过 tester 回归（防止修复引入新 bug）
 
   **分支 1：tester 本任务中已运行过（典型场景：`START_PHASE != reviewer`，或本 Phase 已有过回归轮）：**
-  - 前置：确认其最后一轮已 shutdown_approved
+  - 前置：`CONFIRM_SHUTDOWN(tester)`
 
   **分支 2：tester 本任务中从未启动（典型场景：`START_PHASE = reviewer` 首次回归）：**
-  - 无需等待历史 shutdown_approved（不存在前一轮）
+  - 无需 `CONFIRM_SHUTDOWN`（不存在前一轮）
 
   两个分支共用启动命令：
   ```
@@ -652,7 +654,7 @@ SendMessage(to: "data-expert", message: {"type": "shutdown_request"})
     prompt: "你是开发团队的测试工程师。执行 /tester 技能（回归测试模式）。仅回归 reviewer（及 data-expert，若本轮启用）要求修复的变更及关联影响；BASE_BRANCH={BASE_BRANCH}。代码视图一致性与文件:行号引用按 /tester 技能 Step 4/5 与纪律 8 执行。完成后通知 team lead。"
   )
   ```
-  → `AWAIT(tester, 判据: test_report.md 已更新为本轮回归结论且含明确 ✅/❌)`，读取回归结论 → 关闭本轮 tester（等待 shutdown_approved 后再继续）：
+  → `AWAIT(tester, 判据: test_report.md 已更新为本轮回归结论且含明确 ✅/❌)`，读取回归结论 → 关闭本轮 tester（发出即推进）：
   ```
   SendMessage(to: "tester", message: {"type": "shutdown_request"})
   ```
@@ -661,7 +663,7 @@ SendMessage(to: "data-expert", message: {"type": "shutdown_request"})
     - **IF ✅ 通过** → 继续
 
   → 当前审查轮次 += 1
-  → IF 当前审查轮次 ≤ 3 → 回到 5.1 启动新的 reviewer 实例（前置：确认前一轮 reviewer 已 shutdown_approved）；ELSE → 转「超限暂停」
+  → IF 当前审查轮次 ≤ 3 → 回到 5.1 启动新的 reviewer 实例（前置：`CONFIRM_SHUTDOWN(reviewer)`）；ELSE → 转「超限暂停」
 
 **超限暂停（审查轮次耗尽）：**
   → **暂停**，展示 review_report.md 和 findings.md，请求人工介入。请选择：
@@ -728,11 +730,11 @@ SendMessage(to: "data-expert", message: {"type": "shutdown_request"})
 
 ### 6.1 验证所有成员已正常关闭
 
-按 findings.md「成员实例台账」中**实际启动过的成员实例**逐一确认收到 `shutdown_approved`（系统通知 "X has shut down"），不凭记忆——上下文压缩后台账是唯一可靠来源。受 START_PHASE 与按需启动影响，未启动过的角色直接跳过，不计孤儿候选。全量流程下为：
-- analyst / tech-lead（含 Phase 3 按需纠偏实例）/ dev（含 Phase 4/5 按需修复实例）/ tester（最后一轮）/ reviewer（最后一轮）
-- IF `DATA_CHANGE = true`：data-expert（最后一轮）也必须确认已 shutdown_approved
+执行一次 `ListAgents`，与 findings.md「成员实例台账」对照（不凭记忆——上下文压缩后台账是唯一可靠来源）：
+- Teammates 列表为空 → 全部已关闭；台账中只有「shutdown_request 已发」而无「确认关闭」的成员各补一行「确认关闭」
+- 仍列出的成员 → 标记为**孤儿候选**（典型原因：某轮漏发 shutdown_request、关闭超时、成员在 shutdown_request 到达前已 idle 完最后一轮工作），在 Phase 6.5 逐个 `TaskStop` 回收并报告给用户
 
-如有成员仅 idle 但未发回 shutdown_approved（例如成员在 shutdown_request 到达前已 idle 完最后一轮工作）→ 标记为**孤儿候选**，在 Phase 6.5 逐个 `TaskStop` 回收并报告给用户。
+受 START_PHASE 与按需启动影响，未启动过的角色不会出现在列表与台账中，不计孤儿候选。
 
 ### 6.2 汇总报告
 ```markdown
@@ -771,7 +773,7 @@ teammate 是 **in-process** 运行的——它跑在 lead 自己的 `claude` 进
 - ❌ `kill <PID>` 无对象可杀，且会误伤 lead 自身
 - ✅ 唯一可靠手段是按 name 逐个 `TaskStop`
 
-对 6.1 清单中**每一个已启动但未收到 `shutdown_approved`** 的成员执行：
+对 6.1 核对时**仍在 ListAgents 列表中**的每一个成员执行：
 
 ```
 TaskStop(task_id: "{角色name}")
@@ -781,7 +783,7 @@ TaskStop(task_id: "{角色name}")
 1. 逐个回收，记录每次返回的成功/失败
 2. 返回失败或提示 task 不存在 → 说明该成员实际已停止，视为已回收，不必再处理
 3. 把「成员 name + 触发场景（哪个 Phase、为何未正常 shutdown）+ 回收结果」记入 `.claude/workspace/findings.md`，作为流程改进输入（归档在 6.6 才执行，此时文件仍在原路径）
-4. 全部成员均已 `shutdown_approved`、无需回收时：仅输出一行确认（"全部成员已正常关闭，无需回收"）
+4. 6.1 核对时 Teammates 列表已空、无需回收时：仅输出一行确认（"全部成员已正常关闭，无需回收"）
 
 > 用户侧交叉验证入口：`/tasks` 面板列出全部在跑的 agent，在面板中选中并按 `x` 亦可停止。若 6.5 执行后 `/tasks` 里仍能看到本次任务的成员，属异常，需报告用户。
 
@@ -837,19 +839,19 @@ mv .claude/workspace/release_checklist.md .claude/workspace/archive/{目录}/ 2>
 | 场景 | 处理方式 |
 |------|---------|
 | 任何阶段遇到不可解决的问题 | 暂停，展示 findings.md，请求人工介入 |
-| **异常终止/人工中断** | 关闭所有存活成员（等待 shutdown_approved，超时按孤儿候选 TaskStop 强制回收）→ **孤儿成员回收核对（同 6.5，不可省略）** → 报告 workspace 当前状态（已生成产物清单 + 可用的 --from 复活入口）。团队目录随会话结束自动清理，无需手动删除 |
+| **异常终止/人工中断** | 向所有存活成员发 shutdown_request 并逐个 `CONFIRM_SHUTDOWN`（超时按孤儿候选 TaskStop 强制回收）→ **孤儿成员回收核对（同 6.5，不可省略）** → 报告 workspace 当前状态（已生成产物清单 + 可用的 --from 复活入口）。团队目录随会话结束自动清理，无需手动删除 |
 
 # 纪律
 
 1. **tester 和 reviewer 阶段不可因质量原因省略** — 唯一例外是 `START_PHASE=reviewer` 按 Phase 4 起首守卫跳过 Phase 4（且 reviewer BLOCK 后修复仍必须经 tester 回归，见 5.4.2）
 2. **reviewer BLOCK 后修复必须经过 tester 回归** — 防止修复引入新 bug
 3. **闭环超限必须暂停** — 不允许无限循环消耗 token
-4. **成员完成任务后必须 shutdown 并等待 shutdown_approved** — 协议细节见「关闭成员」节
+4. **成员完成任务后必须立即 shutdown，且不得结束回合空等回执** — 关闭回执只在 lead 活跃时送达、不会唤醒空闲 lead；发出即推进，只有同名重启前与 6.1 收尾按 `CONFIRM_SHUTDOWN` 主动核对，协议细节见「关闭成员」节
 5. **流程结束必须执行孤儿成员回收（6.5）** — 团队目录自动清理不代表成员已停止；teammate 是 in-process 的，只能用 `TaskStop(task_id: name)` 回收，`ps`/`kill` 一律无效
 6. **不替代角色执行** — 编排指挥官只调度，不直接编码/测试/审查
 7. **纠偏与修复一律按需新实例、完成即关** — tech-lead 纠偏、dev 修复每次都是 Agent() 新实例（纠偏模式/清单驱动模式），任务完成立即 shutdown；不留跨阶段待命成员，测试/审查期间团队内没有任何可改码的存活成员。例外：analyst（1.2）/ tech-lead（2.2）在等待用户确认并按答复更新自身产物期间的**同阶段**短暂存活，不属于跨阶段待命
 8. **tester 提交报告前必须 verify 代码视图未变** — 通过 git diff 与测试基准对比；如发现测试期间代码被改动（用户手工改动/外部进程），立即暂停而非继续写结论
-9. **启动同名新一轮成员前必须等前一轮 shutdown_approved** — 否则同名冲突（latest-wins 抢占或自动改名，随版本而异）导致成员定位混乱、旧实例失管（见「启动成员」节；孤儿候选场景除外，按「关闭成员」节第 5 条两种行为分别处理）
+9. **启动同名新一轮成员前必须 `CONFIRM_SHUTDOWN` 前一轮** — 否则同名冲突（latest-wins 抢占或自动改名，随版本而异）导致成员定位混乱、旧实例失管（见「启动成员」节；孤儿候选场景除外，按「关闭成员」节第 5 条两种行为分别处理）
 10. **--from=X 等于声明 X 之前的角色不主动启动** — 详见 §6.1 表（dev → 清单驱动模式；tech-lead → 纠偏模式）；禁止"--from=X 就完全禁用 X 之前的角色"的简化理解，会破坏闭环可达性
 11. **--from in [dev, tester, reviewer] 时沿用当前分支** — 不新建 feature 分支；启动时打印当前分支供用户确认
 12. **--from=X 的前置校验失败必须立即报错暂停** — 报错模板见 Phase 0.1，禁止静默回退到上游 phase 补生成
@@ -859,5 +861,5 @@ mv .claude/workspace/release_checklist.md .claude/workspace/archive/{目录}/ 2>
 16. **阶段完成判定一律走 `AWAIT(成员, 判据)` 协议** — teammate 的 idle 通知不携带产出内容，判据是**产物落盘 + 有结论性章节**，idle 通知仅为触发信号；禁止编写「等成员把结果回传」的等待逻辑（subagent 语义），否则永久阻塞。成员已 idle 但产物不达标时按协议第 3 步补齐，连续 2 次不达标即暂停请求人工；单成员 15 分钟无进展触发超时兜底。协议全文见「阶段完成判定协议」节
 17. **上线就绪核对（6.0）只出工单不拦截** — ✅ 必须附证据出处（文件:行号/章节），❌/⚠️ 卡点在 6.7 逐条列出交用户决策；不触发修复闭环，上线决策属于人
 18. **工作树洁净后才进入 Phase 1-5（0.3）** — 任一入口带未提交改动都先基线提交或退出；全流程入口从非 BASE_BRANCH 起步须用户确认 diff 基准放大
-19. **运行状态与成员实例台账落盘（0.5）** — 轮次/计数/DATA_CHANGE 变更同步改写运行状态块，每次 Agent() 启动与 shutdown_approved/TaskStop 记台账；压缩后以此恢复，6.1 回收核对只认台账
+19. **运行状态与成员实例台账落盘（0.5）** — 轮次/计数/DATA_CHANGE 变更同步改写运行状态块，每次 Agent() 启动、shutdown_request 发出、确认关闭、TaskStop 记台账；压缩后以此恢复，6.1 回收核对只认台账
 20. **修复实例的「方案级问题 / 争议项」上报有通路** — 按「修复实例上报处理」节处理：方案级问题启 tech-lead 纠偏，争议项由 team lead 裁决，不让 dev 硬改也不让它空等超时

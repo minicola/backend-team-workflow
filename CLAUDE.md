@@ -44,15 +44,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 > **API 版本红线（v2.1.178 起）**：`TeamCreate` 与 `TeamDelete` **已被移除**，`Agent` 的 `team_name` 入参**已废弃且被忽略**。当前语义是「每会话唯一隐式团队」：团队名由会话 ID 派生（`session-{前8位}`）不可指定，`Agent(...)` 带 `name` 即自动成为 teammate，会话退出时团队目录自动清理。另需 `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1` 才启用 teammate（否则退化为普通 subagent，双向通信与召回全部失效），team/SKILL.md Phase 0.1b 有门禁探测（刻意排在 0.0/0.1 参数与前置校验之后——用户输入类报错优先，且不改变 evals 三个 Phase 0 场景的期望输出）。改动流程时**不要再写回这几个已移除的工具**。
 
-```
-team (编排，opus)
- ├─ Phase 1: analyst      (opus,   仅 Phase 1)
- ├─ Phase 2: tech-lead    (opus,   Phase 2 方案确认后关闭；Phase 3 纠偏时按需重启新实例，即用即关)
- ├─ Phase 3: dev          (sonnet, Phase 3 编码提交后关闭；Phase 4/5 BLOCK 时按需重启新实例（清单驱动模式），即用即关)
- ├─ Phase 4: tester       (sonnet, 每轮重启 — 不跨轮复用)
- └─ Phase 5: reviewer     (sonnet, 每轮重启 — 不跨轮复用，纯只读审查)
-     └─ data-expert       (sonnet, 条件触发：仅当变更涉及数据模型时，与 reviewer 并行启动（均为纯只读审查），每轮重启)
-```
+各角色的模型与生命周期以 `skills/team/SKILL.md`「团队成员配置」表为准。
 
 理解整体协作必须把 `skills/team/SKILL.md` 当作"主控代码"读：它是唯一驱动所有阶段切换、生命周期管理、闭环判定的逻辑。其余 6 个 skill 只是被它通过 `Agent(...)` 启动并通过 `SendMessage` 召回 / 关停的子角色。
 
@@ -83,10 +75,10 @@ team (编排，opus)
    - 其余 6 个角色 skill（含 data-expert）只保留 `user-invocable: true`，**不带** `disable-model-invocation`。带该字段时 skill 描述不进模型上下文、Skill 工具不可调用（官方文档 code.claude.com/docs/en/skills「Control who invokes a skill」），team 成员经 prompt 中的「执行 /X 技能」会被拦截；去掉后成员直接经 Skill 工具加载，team 的启动 prompt 不需要任何路径替换。（2026-09-03 在 Claude Code 2.1.259 实测：subagent 用 Read 读取带该字段的 SKILL.md 并未被拦截，所以「保留字段 + Read 加载」也能跑，但多一层 `${CLAUDE_PLUGIN_ROOT}` 路径拼接且无收益，不采用。）防自动触发改由各角色 description 末尾的「仅限用户显式调用或 /team 编排成员按启动指令加载，不要自动触发」声明承担，修改 description 时不要删掉这句。
 
 4. **生命周期纪律（team/SKILL.md 末尾的"纪律"节）**
-   - 成员每完成阶段任务，team 必须立即向其发 `{"type": "shutdown_request"}`，不留空闲成员
+   - 成员每完成阶段任务，team 必须立即向其发 `{"type": "shutdown_request"}`，不留空闲成员；**发出即推进，不等回执**——`teammate_terminated`（"X has shut down"）通知只在 lead 活跃时送达、不会唤醒空闲 lead，写「收到 shutdown_approved 后再继续」并结束回合会让流程停到用户手动输入为止（2026-09-16 于 Claude Code 2.1.273 实测两次）。需要确认关闭的只有同名重启前与 6.1 收尾，一律走 team/SKILL.md「关闭成员」节的 `CONFIRM_SHUTDOWN`（ListAgents 轮询 ≤60 秒 → TaskStop），不要再写回被动等待
    - tester / reviewer / data-expert（命中时）**每轮重启新实例**（不要复用旧的）
-   - tech-lead 与 dev **不跨阶段存活**：Phase 2/3 各自完成后立即 shutdown；纠偏（tech-lead）与修复（dev 清单驱动模式）一律按需新实例、即用即关，同名重启前须等前一实例 shutdown_approved
-   - 流程结束（含异常终止）必须执行 Phase 6.5 **孤儿成员回收**：teammate 是 in-process 的，`ps aux | grep agent-name` 恒为空、`kill <PID>` 无效，唯一手段是对未 `shutdown_approved` 的成员逐个 `TaskStop(task_id: "{name}")`（团队目录本身随会话结束自动清理，不需要也无法手动删除）
+   - tech-lead 与 dev **不跨阶段存活**：Phase 2/3 各自完成后立即 shutdown；纠偏（tech-lead）与修复（dev 清单驱动模式）一律按需新实例、即用即关，同名重启前须 `CONFIRM_SHUTDOWN` 前一实例（ListAgents 主动核对）
+   - 流程结束（含异常终止）必须执行 Phase 6.5 **孤儿成员回收**：teammate 是 in-process 的，`ps aux | grep agent-name` 恒为空、`kill <PID>` 无效，唯一手段是对 6.1 `ListAgents` 核对时仍列出的成员逐个 `TaskStop(task_id: "{name}")`（团队目录本身随会话结束自动清理，不需要也无法手动删除）
    - 阶段完成判定统一走 **`AWAIT(成员, 判据)` 协议**（team/SKILL.md「阶段完成判定协议」节，全流程 14 个调用点，含 1.2/2.2 成员按用户答复更新产物后的等待，以及「修复实例上报处理」中的 tech-lead 纠偏等待）：teammate 的 idle 通知**不携带产出内容**，判据是产物落盘 + 有结论性章节，idle 通知仅为触发信号。写「等成员把结果回传」的等待逻辑会永久阻塞。新增等待点时必须引用该协议并声明判据，不要另起等待写法
 
 5. **质量闭环上限 = 3 轮**
