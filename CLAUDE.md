@@ -68,7 +68,7 @@ team (编排，fable)
    所有过程文件路径都是硬编码的，角色之间通过它们传递状态：
    - `task_plan.md`（analyst 产出）
    - `architecture.md`（tech-lead 产出 / `/dev` 直入时由 dev 自写简版）
-   - `findings.md`（多角色追加：调研结论、纠偏指令、修改记录、`DATA_CHANGE` 探测结论；统一条目格式 `## [角色][Phase N] 标题（YYYY-MM-DD）`，格式头由 team Phase 0.2 在旧产物处理**之后**写入——它本身在下游产物清单里，先写会让空工作区误触发脏工作区确认。唯一可原地改写的条目是 team 的「进度跟踪」：进度表 + 运行状态块（含测试/审查轮次上限、tester 与 data-expert 启动次数）+ 成员实例台账（tester / reviewer / data-expert 启动行带期望轮次与基准 commit），是 team lead 上下文压缩后的恢复来源，AWAIT 本轮匹配与 6.1/6.5 回收核对只认台账）
+   - `findings.md`（多角色追加：调研结论、纠偏指令、修改记录、`DATA_CHANGE` 探测结论；统一条目格式 `## [角色][Phase N] 标题（YYYY-MM-DD）`，格式头由 team Phase 0.2 在旧产物处理**之后**写入——它本身在下游产物清单里，先写会让空工作区误触发脏工作区确认。唯一可原地改写的条目是 team 的「进度跟踪」：进度表 + 运行状态块（含测试/审查轮次上限、tester 与 data-expert 启动次数）+ 成员实例台账（tester 启动行带启动序号、reviewer / data-expert 启动行带期望轮次，均带基准 commit），是 team lead 上下文压缩后的恢复来源，AWAIT 本轮匹配与 6.1/6.5 回收核对只认台账）
    - `progress.md`（dev 写入）
    - `test_report.md` / `review_report.md`（tester / reviewer 产出）
    - `data_review.md`（data-expert 产出，**仅 `DATA_CHANGE=true` 时存在**；Phase 0.2 清理与 Phase 6 归档都把它与 `review_report.md` 同档处理）
@@ -88,7 +88,7 @@ team (编排，fable)
    - tech-lead 与 dev **不跨阶段存活**：Phase 2/3 各自完成后立即 shutdown；纠偏（tech-lead）与修复（dev 清单驱动模式）一律按需新实例、即用即关，同名重启前须先 `CONFIRM_SHUTDOWN`（ListAgents 主动核对，60 秒内未消失即 TaskStop）；不同名成员的启动不等前一成员关闭
    - **shutdown 回执不可被动等待**（2.1.273 实证、2.1.305 复核）："X has shut down" 与 idle 通知只在 lead 正在跑回合时投递，不会唤醒已结束回合的 lead，回执会迟到数分钟而非丢失，此时成员早已退出（ListAgents 查不到、TaskStop 报无此任务）。关闭成员一律「发出即推进」，不要写回「收到 shutdown_approved 后再继续」的等待写法——那会停摆到用户手动输入。设计记录见本地 `docs/20260916_shutdown-active-check.md`（含禁止回退清单）
    - 流程结束（含异常终止）必须执行 Phase 6.5 **孤儿成员回收**：teammate 是 in-process 的，`ps aux | grep agent-name` 恒为空、`kill <PID>` 无效，唯一手段是对 6.1 一次 `ListAgents` 仍列出的成员逐个 `TaskStop(task_id: "{name}")`（团队目录本身随会话结束自动清理，不需要也无法手动删除）。TaskStop 结果三分（6.5 与 `CONFIRM_SHUTDOWN` 第 3 条同口径）：成功 / 明确「无此任务」才算已回收，其他错误须 ListAgents 复核，仍存活或状态未知的记「回收未完成」并出现在 6.2/6.7 报告里，不要写回「返回失败即视为已回收」
-   - 阶段完成判定统一走 **`AWAIT(成员, 判据)` 协议**（team/SKILL.md「阶段完成判定协议」节，全流程 14 个调用点，含 1.2/2.2 成员按用户答复更新产物后的等待，以及「修复实例上报处理」中的 tech-lead 纠偏等待）：teammate 的 idle 通知**不携带产出内容**，判据是产物落盘 + 有结论性章节 + **本轮匹配**（tester / reviewer / data-expert 报告的轮次与基准 commit 等于启动时写入台账的期望值；轮间不清理旧报告，复审模式要读上一轮的基准 commit，所以旧报告必须靠匹配排除而不是靠删除），idle 通知仅为触发信号。写「等成员把结果回传」的等待逻辑会永久阻塞。新增等待点时必须引用该协议并声明判据，不要另起等待写法
+   - 阶段完成判定统一走 **`AWAIT(成员, 判据)` 协议**（team/SKILL.md「阶段完成判定协议」节，全流程 14 个调用点，含 1.2/2.2 成员按用户答复更新产物后的等待，以及「修复实例上报处理」中的 tech-lead 纠偏等待）：teammate 的 idle 通知**不携带产出内容**，判据是产物落盘 + 有结论性章节 + **本轮匹配**（tester 报告「测试基准」的启动序号、reviewer / data-expert 报告的审查轮次，加基准 commit，等于启动时写入台账的期望值；tester 的「测试轮次」保持闭环语义不作匹配键；轮间不清理旧报告，复审模式要读上一轮的基准 commit，所以旧报告必须靠匹配排除而不是靠删除），idle 通知仅为触发信号。写「等成员把结果回传」的等待逻辑会永久阻塞。新增等待点时必须引用该协议并声明判据，不要另起等待写法
 
 5. **质量闭环上限 = 3 轮**
    tester↔dev 和 reviewer↔dev↔tester 闭环超过 3 轮必须暂停请求人工。上限以 findings.md 运行状态块的「测试轮次上限 / 审查轮次上限」为唯一来源（默认 3，在 Phase 4/5 头部各声明一次），WHILE、末轮判断与超限暂停的「追加 1 轮」都引用同一值，不再写死数字；用户选「追加 1 轮」只 +1 并持久化，lead 不得自行放宽。修改默认值要同时改 Phase 4/5 头部声明与 0.5 运行状态块模板。Phase 5 的 5.4.2 回归子循环另有独立上限（同一审查轮内重试 1 次，第二次回归仍未通过即超限暂停），与轮次上限共同构成硬边界，追加审查轮次不改变它。

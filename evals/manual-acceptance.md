@@ -34,11 +34,12 @@
 操作：观察 lead 在启动第 2 轮 tester / reviewer 之后、成员写出新报告之前的行为（可在 dev 修复提交后、lead 启动新成员时用 `/tasks` 面板与 workspace 文件 mtime 对照）。
 
 判定：
-1. 台账中第 2 轮启动行含「期望轮次 {N}，基准 commit {hash}」，hash 等于启动时 `git rev-parse --short HEAD`
+1. 台账中第 2 轮启动行含匹配期望值（tester「启动序号 {N}，基准 commit {hash}」，reviewer「期望轮次 {N}，基准 commit {hash}」），hash 等于启动时 `git rev-parse --short HEAD`
 2. 上一轮 `test_report.md` / `review_report.md` 仍在原路径且带完整结论，lead **不据其**召回 dev、进入下一 Phase 或关闭成员
-3. 新报告落盘后「测试轮次 / 审查轮次」= 期望轮次、「测试基准」HEAD / 「审查基准 commit」= 台账 hash，lead 才推进
-4. 故意让成员写错轮次（人工改报告轮次为上一轮值）时，lead 按 AWAIT 第 3 步要求补齐，而不是推进
+3. 新报告落盘后 tester「测试基准」启动序号 = 台账值、HEAD = 台账 hash；reviewer「审查轮次」= 当前审查轮次、「审查基准 commit」= 台账 hash，lead 才推进
+4. 故意让成员写错匹配字段（人工把启动序号 / 审查轮次改为上一轮值）时，lead 按 AWAIT 第 3 步要求补齐，而不是推进
 5. data-expert 启用时其匹配键是「data-expert 启动次数」，与 reviewer 的审查轮次无关
+6. tester「测试轮次」保持闭环语义：Phase 4 第 2 轮报告写「第 2 轮」；漂移作废重测后的报告轮次与作废轮相同、启动序号 +1；Phase 5 回归报告轮次 = 上一份报告 +1
 
 ## C 未提交代码漂移（tester 快照 + dev 最终编译）
 
