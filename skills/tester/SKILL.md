@@ -90,7 +90,17 @@ user-invocable: true
 
 ## Step 4: 执行测试
 
-**捕获基准（执行测试前）**：执行 `git diff {BASE_BRANCH}...HEAD`（{BASE_BRANCH} 为主干分支 main/master，team 流程中由 team-lead 在 Phase 0.0 探测）捕获当前完整变更基准，将变更文件清单、stat 与 commit hash（或 working tree 状态）记入测试报告「测试基准」章节。
+**捕获被测代码快照（执行测试前）**：快照必须覆盖已提交、暂存区、工作区与未跟踪的业务文件——只比 `{BASE_BRANCH}...HEAD` 会漏掉 HEAD 不变时的未提交改动（{BASE_BRANCH} 为主干分支，team 流程中由 team-lead 在 Phase 0.0 探测）。排除两类非被测产物：`.claude/workspace`，以及测试路径（项目约束加载第 3 条的测试目录，默认 `src/test`；测试代码由你自己编写和修改，不算漂移）：
+
+```bash
+git rev-parse --short HEAD
+git diff {BASE_BRANCH}...HEAD --stat
+# 未提交改动（暂存 + 工作区 + 未跟踪），排除 workspace 与测试路径；测试路径非默认时替换 glob
+git status --porcelain -- . ':(exclude).claude/workspace' ':(exclude,glob)**/src/test/**'
+git diff HEAD --stat -- . ':(exclude).claude/workspace' ':(exclude,glob)**/src/test/**'
+```
+
+四段输出原样记入测试报告「测试基准」章节；被测版本 = HEAD + 记录的未提交改动。team 流程下 HEAD 应等于 team-lead 启动时记录的基准 commit、未提交改动应为空；后两条非空时照常记录并在「基本信息」标注「被测版本含未提交改动（来源待查）」，team 流程下 SendMessage 告知 team-lead，不阻塞测试。
 
 分两段执行：
 
@@ -121,7 +131,11 @@ mvn test -pl <受影响模块>
 
 ## Step 5: 产出测试报告
 
-**复核基准（写最终结论前）**：再次执行 `git diff {BASE_BRANCH}...HEAD`，与「测试基准」章节记录的基准对比；如发现差异（代码在测试期间被改动），**立即 SendMessage 上报 team-lead 暂停，不写最终结论**；复核结果记入「结论前复核」行。
+**复核快照（写最终结论前、提交测试代码之前）**：重新执行 Step 4 的四条快照命令，与「测试基准」章节逐段对比。HEAD 变化、`{BASE_BRANCH}...HEAD` stat 变化、未提交改动清单或 stat 变化，任一不同即判定代码在测试期间被改动：**立即 SendMessage 上报 team-lead 暂停（附差异文件清单），不写最终结论**；差异只出现在测试路径内（你自己改的测试代码）不算漂移。复核结果记入「结论前复核」行。复核必须早于下方的 `test:` 提交，否则 HEAD 会因自己的提交而变化。
+
+两个编号字段，职责不同：
+- **「测试轮次」保持闭环语义**（第几轮测试）：启动 prompt 给定「本轮测试轮次」时用给定值（Phase 4 = team 的当前测试轮次，漂移作废重测时与作废轮相同）；未给定时（Phase 5 回归、独立运行）= 上一份报告轮次 +1，无历史报告记第 1 轮
+- **「启动序号」只用于 team 识别本轮报告**：启动 prompt 给定「启动序号」时原样写入「测试基准」表（team 以它和 HEAD 匹配本轮报告，写错会被当作旧报告而无法推进）；独立运行时写「—」
 
 写入 `.claude/workspace/test_report.md`，严格遵循以下模板：
 
@@ -139,8 +153,10 @@ mvn test -pl <受影响模块>
 ## 测试基准
 | 项目 | 内容 |
 |------|------|
+| 启动序号 | {team 启动 prompt 给定值；独立运行写 —} |
+| HEAD | {git rev-parse --short HEAD，即被测提交} |
 | 基准 diff | git diff {BASE_BRANCH}...HEAD 的变更文件清单与 stat |
-| commit / working tree 状态 | {commit hash 或未提交改动说明} |
+| 未提交改动 | {git status --porcelain 与 git diff HEAD --stat 输出（已排除 workspace 与测试路径），无则写「无」} |
 | 结论前复核 | 与基准一致 / 发现差异已上报 team-lead |
 
 ## 测试链路
@@ -236,14 +252,14 @@ git commit -m "test: {需求/模块说明} 第 {N} 轮测试"
 > **回归输入以 team-lead 启动 prompt 指定的清单为准**——可能是上一轮 test_report.md 的 Bug 清单（Phase 4 闭环），也可能是 review_report.md / data_review.md 的修复项清单（Phase 5 reviewer/data-expert BLOCK 后回归）。无历史 test_report.md 时（如 --from=reviewer 首次回归），新建测试报告、轮次记为第 1 轮。
 
 1. 读取 team-lead 指定的修复项清单（上一轮 test_report.md 的 Bug 清单 或 review_report.md / data_review.md 的修复项）
-2. **重新捕获基准**：按 Step 4 用当前 `git diff {BASE_BRANCH}...HEAD` 与 HEAD commit 覆盖「测试基准」章节（旧基准早于修复提交，沿用会让 Step 5 的「结论前复核」误报漂移）；结论前复核照常执行
+2. **重新捕获快照**：按 Step 4 的四条命令重新捕获被测代码快照并覆盖「测试基准」章节（旧基准早于修复提交，沿用会让 Step 5 的「结论前复核」误报漂移）；结论前复核照常执行
 3. **仅回归以下内容**：
    - 修复项对应的测试用例（验证修复；bug 源自数据断言的，重跑对应断言；以取样记录为输入的用例先按 Step 2.5 重做存在性检查，记录已不存在则重新取样，不允许以 skipped 冒充已验证）
    - 修复代码可能影响的关联功能（防止引入新问题）
    - 被 team lead 裁决为「争议项跳过」的修复项（progress.md 有记录）→ 修正或移除对应的错误用例，报告中标注「用例已修正：{原因}」，不再计为 Bug
 4. **不重新执行**所有测试用例
 5. 更新测试报告：
-   - 测试轮次 +1（无历史报告时记第 1 轮）
+   - 测试轮次 +1（无历史报告时记第 1 轮）；启动 prompt 给定「本轮测试轮次」时以给定值为准；「启动序号」按启动 prompt 给定值覆盖
    - 已修复项的状态改为"已验证"
    - 如有新发现的 bug，追加到 Bug 清单
 

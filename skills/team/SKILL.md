@@ -63,10 +63,11 @@ argument-hint: "[--from=<phase>] [--base=<branch>] [<需求描述或PRD路径>]�
 
 1. **触发**：收到该成员的 idle 通知（"X is idle"）或其主动 SendMessage 报告 → 进入第 2 步。**不要因为没收到通知就一直空等**——通知只是加速信号，缺失不影响判定。
    > 唤醒源事实（2.1.273 实证）：idle 通知与 "X has shut down" 只在 lead 正在跑回合时送达，**不会唤醒已结束回合的 lead**；能唤醒空闲 lead 的只有成员的显式 SendMessage 报告与用户输入（积压的通知会在下一回合迟到送达，并未丢失）。这就是各 Phase 启动 prompt 都要求成员「完成后通知 team lead」的原因，改 prompt 时不要删掉这句。
-2. **验收判据**：读取该成员的产物文件，同时满足两条才算完成：
+2. **验收判据**：读取该成员的产物文件，同时满足三条才算完成：
    - 文件存在且非空
    - 内容完整——具备该产物的**结论性章节**（判据见各 Phase 的 `AWAIT` 标注），而非写到一半的半截文件
-3. **未达标处理**：产物缺失或不完整 →
+   - **本轮匹配**——产物记录的匹配字段等于本次启动时写入台账的期望值：tester 用「测试基准」的启动序号 + HEAD（「测试轮次」保持闭环语义，不作匹配键），reviewer 用审查轮次 + 审查基准 commit，data-expert 用审查轮次（= 其启动次数）+ 审查基准 commit。tester / reviewer / data-expert 每轮复用同名报告，且轮间**不清理**旧报告（复审模式要读上一轮的「审查基准 commit」），仅凭"文件存在且有结论"会把上一轮完整报告当作本轮产物；不匹配即视为**本轮产物尚未落盘**，按第 3 步处理，不得据旧报告推进
+3. **未达标处理**：产物缺失、不完整或不匹配本轮 →
    - 成员**仍在运行**（未 idle）→ 正常等待，回到第 1 步
    - 成员**已 idle 但产物不达标** → 说明它提前收工或出错（teammate 遇错可能直接停止）。`SendMessage` 告知具体缺口并要求补齐，重新进入判定；同一成员**连续 2 次补齐仍不达标 → 暂停请求人工**，不要无限循环
 4. **超时兜底**：单个成员自启动起累计 **15 分钟**仍未达标 → `SendMessage` 询问进度；再等一个周期仍**无进展**（判定：该成员的产物文件、progress.md、findings.md 的 mtime 均无变化，`git status` / `git log` 无新改动，且无新的 SendMessage 回复）→ 记入 findings.md 并暂停请求人工。有进展则继续等待，不因耗时长本身暂停
@@ -95,7 +96,7 @@ SendMessage(to: "{角色name}", message: {"type": "shutdown_request"})
 
 1. `ListAgents`：该 name 不在列表 → 已关闭，台账记「确认关闭」，返回
 2. 仍在列表 → `Bash(sleep 15)` 后重新 `ListAgents`；自首次核对起累计 **60 秒**仍在列表 → 判定为孤儿候选，记入 findings.md，执行第 3 条
-3. **强制回收**：`TaskStop(task_id: "{角色name}")`（接受 bare name 或 `name@team`；**只有 TaskStop 能终止 in-process 的 teammate**，`kill <PID>` 无从下手，见 6.5）。返回失败或提示「无此任务」→ 成员实际已退出（正常关闭的成员本就如此），台账记「确认关闭」；返回成功 → 台账记「TaskStop 回收」。随后再 `ListAgents` 一次：仍在列表 → 回收失败，按第 4 条脱困
+3. **强制回收**：`TaskStop(task_id: "{角色name}")`（接受 bare name 或 `name@team`；**只有 TaskStop 能终止 in-process 的 teammate**，`kill <PID>` 无从下手，见 6.5）。按返回结果三分：返回成功 → 台账记「TaskStop 回收」；明确提示「无此任务 / No task found」→ 成员实际已退出（正常关闭的成员本就如此），台账记「确认关闭」；**其他错误**（超时、权限、未知异常）→ 不证明成员已退出，台账暂不记关闭。无论哪种结果都再 `ListAgents` 一次：已不在列表 → 台账补记「确认关闭」；仍在列表 → 回收失败，按第 4 条脱困
 4. **孤儿脱困**：TaskStop 回收失败后不再等待，下一轮直接同名启动。同名冲突的系统行为按实际观察适配（不同版本二选一）：
    - **latest-wins（当前版本默认）**：名字指向最新实例，后续 SendMessage / TaskStop 用原名即可，旧实例改用其 spawn 结果中的 agentId 定位
    - **自动改名**（如 `tester-2`）：新名字记入 findings.md 并在后续 SendMessage / TaskStop 中一律使用
@@ -215,20 +216,21 @@ grep -o 'CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS"[^,}]*' ~/.claude/settings.json 2>
 工作树未提交改动的处理（基线提交或退出）统一在 0.3「工作树洁净检查」执行，所有 START_PHASE 都走。
 
 ### 0.2 工作空间初始化
+
+> 顺序固定：**先处理旧产物（含用户取消出口），再初始化本轮文件**。findings.md 的格式头必须在旧产物处理之后写入——它本身在下游产物清单里，先写会让空工作区首次启动也触发脏工作区确认，且刚写的格式头会随旧产物一起被归档 / 删除。
+
 - 确保 `.claude/workspace/` 目录存在（不存在则 mkdir）
 - **git 排除主防线**：将 `.claude/workspace/` 写入目标项目 `.git/info/exclude`（幂等，不触碰被跟踪文件）：
   ```bash
   grep -qxF '.claude/workspace/' .git/info/exclude 2>/dev/null || echo '.claude/workspace/' >> .git/info/exclude
   ```
   此后 workspace 文件不会出现在 git status / git add -A 中；各角色提交命令中的 `:(exclude).claude/workspace` 保留，作为独立入口（如单独 /dev、/tester，未经本步）下的兜底
-- **findings.md 格式头**：若 `findings.md` 不存在 → 创建并写入以下格式头；已存在则保留原内容（缺格式头时在文件头补插）。此后**所有角色（含 team 自身）追加条目均按此格式**：
-  ```markdown
-  # Findings
-  > 条目格式：`## [角色][Phase N] 标题（YYYY-MM-DD）`，正文一段；只追加，不修改历史条目（例外：team 的「进度跟踪」条目由 team lead 原地改写）。
-  ```
+
+**第 1 步 · 旧产物处理（按 START_PHASE 分流，本步之前不写任何 workspace 文件）**
 
 **IF `START_PHASE in [analyst, tech-lead]`（全新流程语义）：**
 - 检测下游产物清单：`architecture.md` / `findings.md` / `progress.md` / `test_report.md` / `review_report.md` / `data_review.md` / `release_checklist.md`（`START_PHASE=analyst` 时清单加上 `task_plan.md`）
+- 清单中无任何文件（空工作区首次启动）→ 不提示，直接进入第 2 步
 - 若清单中任一文件存在 → 触发脏工作区交互（暂停并向用户呈现 3 选 1）：
   ```
   [⚠️] 检测到 workspace 中已有以下下游产物:
@@ -241,7 +243,7 @@ grep -o 'CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS"[^,}]*' ~/.claude/settings.json 2>
   ```
   - 选 1 → `mkdir -p .claude/workspace/archive/{YYYYMMDD_HHMMSS}_orphaned/ && mv {下游产物} archive/{目录}/`
   - 选 2 → 删除下游产物清单中所有文件
-  - 选 3 → 退出，不创建团队
+  - 选 3 → 退出，不创建团队（此时 workspace 原有产物未被改动）
 
 **IF `START_PHASE in [dev, tester, reviewer]`（显式复用 workspace）：**
 - 保留 0.1 校验通过的前置文件 + `findings.md`
@@ -249,6 +251,14 @@ grep -o 'CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS"[^,}]*' ~/.claude/settings.json 2>
   - `dev` → 清 `progress.md` / `test_report.md` / `review_report.md` / `data_review.md` / `release_checklist.md`
   - `tester` → 清 `test_report.md` / `review_report.md` / `data_review.md` / `release_checklist.md`；`progress.md` 显式保留（支持同任务从 --from=dev 中断后接续；如与本次代码不同源，tester 会按其 Step 1 规则忽略）
   - `reviewer` → 清 `test_report.md`（避免陈旧报告被当作本次测试结果）/ `review_report.md` / `data_review.md` / `release_checklist.md`
+
+**第 2 步 · findings.md 格式头（旧产物处理完成后执行）**
+
+若 `findings.md` 不存在 → 创建并写入以下格式头；已存在则保留原内容（缺格式头时在文件头补插）。此后**所有角色（含 team 自身）追加条目均按此格式**，0.5 的进度跟踪条目紧随本格式头追加：
+```markdown
+# Findings
+> 条目格式：`## [角色][Phase N] 标题（YYYY-MM-DD）`，正文一段；只追加，不修改历史条目（例外：team 的「进度跟踪」条目由 team lead 原地改写）。
+```
 
 ### 0.3 分支创建与工作树洁净检查
 **IF `START_PHASE in [analyst, tech-lead]`：**
@@ -310,17 +320,19 @@ Phase 0.2 写入格式头后，紧接着追加进度表骨架；仅列出从 STA
 | 项 | 值 |
 |---|---|
 | START_PHASE / BASE_BRANCH / BRANCH_PREFIX | {值} |
-| 当前测试轮次 / 当前审查轮次 / 回归重试计数 | 0 / 0 / 0 |
+| 当前测试轮次 / 测试轮次上限 | 0 / 3 |
+| 当前审查轮次 / 审查轮次上限 | 0 / 3 |
+| 回归重试计数 | 0 |
 | DATA_CHANGE | false |
-| data-expert 启动次数 | 0 |
+| tester 启动次数 / data-expert 启动次数 | 0 / 0 |
 
 **成员实例台账**
 | 时间 | name | 事件 | 备注 |
 |---|---|---|---|
-| {HH:MM} | {name} | Agent() 启动 / shutdown_request 已发 / 确认关闭 / TaskStop 回收 | {Phase、模式、Agent 结果中的用量（如有）} |
+| {HH:MM} | {name} | Agent() 启动 / shutdown_request 已发 / 确认关闭 / TaskStop 回收 / 回收未完成 | {Phase、模式；启动行必须写匹配期望值供 AWAIT 本轮匹配——tester「启动序号 {N}，基准 commit {hash}」，reviewer / data-expert「期望轮次 {N}，基准 commit {hash}」；Agent 结果中的用量（如有）} |
 ```
 
-规则：后文所有轮次、计数、DATA_CHANGE 的变更**同步改写运行状态块**；每次 `Agent()` 启动、发出 shutdown_request、`CONFIRM_SHUTDOWN` 得出确认关闭、执行 TaskStop 各在台账追加一行（「确认关闭」只来自 ListAgents 核对或实际送达的 "X has shut down"，不凭推测补记）。上下文被压缩后，一律以这两个块为准恢复状态与成员清单；6.1 的回收核对以台账为唯一来源。
+规则：后文所有轮次、计数、DATA_CHANGE 的变更**同步改写运行状态块**；**轮次上限只在「超限暂停」用户选「追加 1 轮」时 +1，lead 不得自行改动**；每次 `Agent()` 启动、发出 shutdown_request、`CONFIRM_SHUTDOWN` 得出确认关闭、执行 TaskStop 各在台账追加一行（「确认关闭」只来自 ListAgents 核对或实际送达的 "X has shut down"，不凭推测补记）。上下文被压缩后，一律以这两个块为准恢复状态与成员清单（含轮次上限与各启动行的期望值）；6.1 的回收核对以台账为唯一来源。
 
 ---
 
@@ -440,9 +452,9 @@ dev 报告编译 3 轮未通过：
 
 ### 3.3 dev 完成编码
 
-`AWAIT(dev, 判据: progress.md 存在且各模块标记完成 AND `git log {BASE_BRANCH}..HEAD` 有 dev 的新提交)`。
+`AWAIT(dev, 判据: progress.md 存在且各模块标记完成 AND `git log {BASE_BRANCH}..HEAD` 有 dev 的新提交 AND `git status --porcelain`（排除 workspace）为空)`。
 
-**dev 的判据以 git 提交为主**——产物是代码而非报告文件，仅凭 progress.md 不足以确认落盘。达标后核对：编码完成 + /simplify 与 code-simplifier 已执行 + 编译通过 + 改动已提交（feature 分支内，排除 .claude/workspace）；其中「编译通过 / 优化已执行」无法从 git 观测，以 dev 的报告为准，如报告缺失则 SendMessage 追问后再进入 3.4。
+**dev 的判据以 git 提交为主**——产物是代码而非报告文件，仅凭 progress.md 不足以确认落盘。达标后核对：编码完成 + /simplify 与 code-simplifier 已执行 + 最终代码编译通过（/dev Step 4 的编译排在全部改码动作之后）+ 改动已提交（feature 分支内，排除 .claude/workspace）+ 工作树无未提交的业务代码（Step 4.5 数据验证的修复也必须已追加提交，否则 tester 测到的不是提交的版本）；其中「编译通过 / 优化已执行」无法从 git 观测，以 dev 的报告为准（报告须附最终提交 hash，与 `git rev-parse --short HEAD` 一致），如报告缺失则 SendMessage 追问后再进入 3.4。
 
 ### 3.4 关闭 dev
 编码提交确认后立即关闭（Phase 4/5 闭环若 BLOCK，按需重启新实例进入清单驱动模式，即用即关）：
@@ -460,12 +472,12 @@ SendMessage(to: "dev", message: {"type": "shutdown_request"})
 
 ```
 当前测试轮次 = 1
-最大轮次 = 3
+测试轮次上限 = 3（默认值；仅在「超限暂停」用户选「追加 1 轮」时 +1，写入运行状态块）
 ```
 
 ### 测试-修复闭环
 
-**WHILE 当前测试轮次 ≤ 3:**
+**WHILE 当前测试轮次 ≤ 测试轮次上限:**
 
 > 测试期间团队内没有存活的可改码成员（dev 已于 3.4 关闭或从未启动），代码视图漂移的主要来源只剩用户手工改动/外部进程。tester 的基准 diff 纪律仍然照常执行，作为兜底。
 
@@ -473,19 +485,22 @@ SendMessage(to: "dev", message: {"type": "shutdown_request"})
 
 **前置**：如非首轮，先 `CONFIRM_SHUTDOWN(tester)`（避免同名冲突，见纪律 9；启动不同名成员无需此步）。
 
+启动前 `tester 启动次数 += 1`，记录 `被测 commit = git rev-parse --short HEAD`（运行状态块同步；台账启动行备注写「启动序号 {tester 启动次数}，基准 commit {hash}」），作为 4.2 本轮匹配的期望值。启动序号只用于识别本轮报告；报告的「测试轮次」保持闭环语义 = 当前测试轮次（漂移作废重测时轮次不变、启动序号 +1）：
+
 ```
 Agent(
   name: "tester",
   model: sonnet,
-  prompt: "你是开发团队的测试工程师。执行 /tester 技能{当前轮次 > 1 ? '（回归测试模式，修复项清单 = 上一轮 test_report.md 的 Bug 清单）' : ''}。读取 workspace 中的 task_plan.md、architecture.md 进行测试；BASE_BRANCH={BASE_BRANCH}。{需求补充}代码视图一致性与文件:行号引用按 /tester 技能 Step 4/5 与纪律 8 执行。完成后通知 team lead。"
+  prompt: "你是开发团队的测试工程师。执行 /tester 技能{当前测试轮次 > 1 ? '（回归测试模式，修复项清单 = 上一轮 test_report.md 的 Bug 清单）' : ''}。本轮测试轮次 = {当前测试轮次}（写入报告「测试轮次」），启动序号 = {tester 启动次数}（写入报告「测试基准」启动序号行）。读取 workspace 中的 task_plan.md、architecture.md 进行测试；BASE_BRANCH={BASE_BRANCH}。{需求补充}代码视图一致性与文件:行号引用按 /tester 技能 Step 4/5 与纪律 8 执行。完成后通知 team lead。"
 )
 ```
 
 #### 4.2 等待 tester 完成
 
-`AWAIT(tester, 判据: test_report.md 存在且含明确的 ✅/❌ 最终结论 + 「结论前复核」行)`。达标后读取 `.claude/workspace/test_report.md`。
+`AWAIT(tester, 判据: test_report.md 含明确的 ✅/❌ 最终结论 + 「结论前复核」行，且「测试基准」启动序号 = 台账记录的启动序号、HEAD = 台账记录的基准 commit)`。达标后读取 `.claude/workspace/test_report.md`。
 
 > 「有结论」是硬判据：tester 若中途停止会留下无结论的半截报告，此时按 `AWAIT` 第 3 步要求补齐，**不得**把半截报告当作 ❌ 处理——那会误召 dev 修复不存在的问题。
+> 「本轮匹配」同为硬判据：上一轮的 test_report.md 仍在原路径且有完整结论，启动序号或 HEAD 不等于台账期望值即为旧报告，按 `AWAIT` 第 3 步继续等待，不得据其推进。
 
 **IF 收到 tester 的「代码视图漂移」上报（测试期间代码被改动）**：
 1. 核实改动来源（此时团队内无存活的可改码成员——排查是否用户手工改动或外部进程所为），结论记入 findings.md
@@ -506,7 +521,9 @@ SendMessage(to: "tester", message: {"type": "shutdown_request"})
 
 **IF 测试结论 = ❌ 未通过：**
 
-  **IF 当前测试轮次 = 3（已是最后一轮）→ 不再召回 dev，直接转「超限暂停」分支。**
+  **IF 当前测试轮次 = 测试轮次上限（已是最后一轮）→ 不再召回 dev，直接转「超限暂停」分支。**
+
+  **修复路径（超限暂停选「追加 1 轮」后也走这里）：**
 
   启动 dev 修复（统一路径：dev 不跨阶段存活，每次修复都是模式 B 新实例；前置：若本任务已有过 dev 实例，先 `CONFIRM_SHUTDOWN(dev)`）：
   ```
@@ -517,17 +534,17 @@ SendMessage(to: "tester", message: {"type": "shutdown_request"})
   )
   ```
 
-  → `AWAIT(dev, 判据: `git log {BASE_BRANCH}..HEAD` 出现本轮新提交 AND progress.md 记录了本轮修复项；争议项全部裁决跳过的例外见「修复实例上报处理」)`，期间 dev 的「方案级问题 / 争议项」上报按「修复实例上报处理」节处理
+  → `AWAIT(dev, 判据: `git log {BASE_BRANCH}..HEAD` 出现本轮新提交 AND progress.md 记录了本轮修复项 AND `git status --porcelain`（排除 workspace）为空；争议项全部裁决跳过的例外见「修复实例上报处理」)`，期间 dev 的「方案级问题 / 争议项」上报按「修复实例上报处理」节处理
   → 立即关闭 dev（发出即推进，不等回执）：
   ```
   SendMessage(to: "dev", message: {"type": "shutdown_request"})
   ```
   → 当前测试轮次 += 1
-  → IF 当前测试轮次 ≤ 3 → 回到 4.1 启动新的 tester 实例（前置：`CONFIRM_SHUTDOWN(tester)`）；ELSE → 转「超限暂停」
+  → IF 当前测试轮次 ≤ 测试轮次上限 → 回到 4.1 启动新的 tester 实例（前置：`CONFIRM_SHUTDOWN(tester)`）；ELSE → 转「超限暂停」
 
 **超限暂停（测试轮次耗尽）：**
   → **暂停**，展示 Bug 变化趋势和 findings.md，请求人工介入。请选择：
-    1) 追加 1 轮（轮次上限 +1 后继续，含召回 dev 修复）
+    1) 追加 1 轮：`测试轮次上限 += 1`（同步改写运行状态块，findings.md 记「用户追加测试轮次，上限 → {新值}」），然后执行上方「修复路径」（启动 dev 修复 → AWAIT → 关闭 dev → 当前测试轮次 += 1）并回到 4.1。本次追加只放开一轮，再次耗尽仍回到本暂停；未经用户在此选择，lead 不得调整上限
     2) 接受当前状态进入下一 Phase（风险自担，记录 findings.md）
     3) 终止流程（走异常终止路径，见终止条件表）
   暂停期间无存活成员待命（人工选追加轮次时 dev 按需重启）。人工选择后的任务状态归属：选 1 → Phase4 保持 in_progress 继续循环；选 2 → 更新 findings.md 进度表：Phase 4 → completed 并在 findings.md 记「测试超限接受，风险自担」后进入 Phase 5；选 3 → 保持 in_progress，走异常终止路径。
@@ -540,8 +557,8 @@ SendMessage(to: "tester", message: {"type": "shutdown_request"})
 
 ```
 当前审查轮次 = 1
-最大轮次 = 3
-每轮回归重试上限 = 1（见 5.4.2，防回归子循环无界）
+审查轮次上限 = 3（默认值；仅在「超限暂停」用户选「追加 1 轮」时 +1，写入运行状态块）
+每轮回归重试上限 = 1（见 5.4.2，防回归子循环无界；与审查轮次上限相互独立，追加审查轮次不改变它）
 ```
 
 ### 5.0 数据变更探测（决定是否启用 data-expert，每轮进入 5.1 前执行）
@@ -564,16 +581,18 @@ git diff {BASE_BRANCH}...HEAD --name-only | grep -vE '(^|/)src/test/' | grep -E 
 
 ### 审查-修复闭环
 
-**WHILE 当前审查轮次 ≤ 3:**
+**WHILE 当前审查轮次 ≤ 审查轮次上限:**
 
 #### 5.1 启动 reviewer 成员（DATA_CHANGE=true 时与 data-expert 并行启动）
+
+启动前记录 `审查基准 commit = git rev-parse --short HEAD`（台账 reviewer 启动行备注写「期望轮次 {当前审查轮次}，基准 commit {hash}」；同轮 data-expert 启动行写「期望轮次 {data-expert 启动次数}，基准 commit {hash}」），作为 5.2 本轮匹配的期望值。审查期间无可改码成员，两份报告记录的「审查基准 commit」应与之一致。
 
 启动 reviewer：
 ```
 Agent(
   name: "reviewer",
   model: opus,
-  prompt: "你是开发团队的代码审核员。执行 /reviewer 技能{当前轮次 > 1 ? '（第 {N} 轮复审）' : ''}。审查当前代码变更（纯只读，不修改任何代码）；BASE_BRANCH={BASE_BRANCH}。{需求补充}完成后通知 team lead。"
+  prompt: "你是开发团队的代码审核员。执行 /reviewer 技能{当前审查轮次 > 1 ? '（第 {当前审查轮次} 轮复审）' : ''}。本轮审查轮次 = {当前审查轮次}（写入报告「审查轮次」）。审查当前代码变更（纯只读，不修改任何代码）；BASE_BRANCH={BASE_BRANCH}。{需求补充}完成后通知 team lead。"
 )
 ```
 
@@ -591,10 +610,10 @@ Agent(
 
 两者并行运行，**分别 AWAIT、先到先读**，不要串行空等：
 
-- `AWAIT(reviewer, 判据: review_report.md 存在且含 BLOCK/APPROVE 明确结论)` → 读取 `.claude/workspace/review_report.md`
-- IF `DATA_CHANGE = true`：`AWAIT(data-expert, 判据: data_review.md 存在且含 BLOCK/APPROVE 明确结论)` → 读取 `.claude/workspace/data_review.md`
+- `AWAIT(reviewer, 判据: review_report.md 含 BLOCK/APPROVE 明确结论，且「审查轮次」= 当前审查轮次、「审查基准 commit」= 台账记录的基准 commit)` → 读取 `.claude/workspace/review_report.md`
+- IF `DATA_CHANGE = true`：`AWAIT(data-expert, 判据: data_review.md 含 BLOCK/APPROVE 明确结论，且「审查轮次」= data-expert 启动次数、「审查基准 commit」= 台账记录的基准 commit)` → 读取 `.claude/workspace/data_review.md`
 
-两份都达标后才进入 5.3；任一未达标时按 `AWAIT` 第 3 步处理该成员，**不影响**另一成员的已达标结论。
+两份都达标后才进入 5.3；任一未达标时按 `AWAIT` 第 3 步处理该成员，**不影响**另一成员的已达标结论。非首轮时两份旧报告都仍在原路径且有完整结论，轮次 / 基准 commit 不匹配即为旧报告，不得据其推进（复审模式需要旧报告的基准 commit，所以轮间不清理）。
 
 #### 5.3 关闭本轮审查成员
 无论结果如何，当轮成员完成后立即关闭（各自发出即推进，不等回执）：
@@ -620,9 +639,9 @@ SendMessage(to: "data-expert", message: {"type": "shutdown_request"})
 
 **IF 结论 = BLOCK：**
 
-  **IF 当前审查轮次 = 3（已是最后一轮）→ 不再召回 dev，直接转「超限暂停」分支。**
+  **IF 当前审查轮次 = 审查轮次上限（已是最后一轮）→ 不再召回 dev，直接转「超限暂停」分支。**
 
-  ### 5.4.1 召回 dev 修复
+  ### 5.4.1 召回 dev 修复（超限暂停选「追加 1 轮」后也从这里继续）
 
   启动 dev 修复（统一路径：dev 不跨阶段存活，每次修复都是模式 B 新实例；前置：若本任务已有过 dev 实例，先 `CONFIRM_SHUTDOWN(dev)`）：
   ```
@@ -633,7 +652,7 @@ SendMessage(to: "data-expert", message: {"type": "shutdown_request"})
   )
   ```
 
-  → `AWAIT(dev, 判据: `git log {BASE_BRANCH}..HEAD` 出现本轮新提交 AND progress.md 记录了本轮修复项（含 data_review.md 清单项，若本轮启用）；争议项全部裁决跳过的例外见「修复实例上报处理」)`，期间 dev 的「方案级问题 / 争议项」上报按「修复实例上报处理」节处理
+  → `AWAIT(dev, 判据: `git log {BASE_BRANCH}..HEAD` 出现本轮新提交 AND progress.md 记录了本轮修复项（含 data_review.md 清单项，若本轮启用）AND `git status --porcelain`（排除 workspace）为空；争议项全部裁决跳过的例外见「修复实例上报处理」)`，期间 dev 的「方案级问题 / 争议项」上报按「修复实例上报处理」节处理
   → 立即关闭 dev（发出即推进，不等回执）：
   ```
   SendMessage(to: "dev", message: {"type": "shutdown_request"})
@@ -647,15 +666,15 @@ SendMessage(to: "data-expert", message: {"type": "shutdown_request"})
   **分支 2：tester 本任务中从未启动（典型场景：`START_PHASE = reviewer` 首次回归）：**
   - 无需 `CONFIRM_SHUTDOWN`（不存在前一轮）
 
-  两个分支共用启动命令：
+  两个分支共用启动命令。启动前 `tester 启动次数 += 1`，记录 `被测 commit = git rev-parse --short HEAD`（台账启动行备注写「启动序号 {tester 启动次数}，基准 commit {hash}」）。本步不传「本轮测试轮次」，报告的「测试轮次」由 tester 按回归模式规则取上一份报告 +1（闭环语义：Phase 5 的每次回归都是新一轮测试，不受 Phase 4 轮次变量约束）：
   ```
   Agent(
     name: "tester",
     model: sonnet,
-    prompt: "你是开发团队的测试工程师。执行 /tester 技能（回归测试模式）。仅回归 reviewer（及 data-expert，若本轮启用）要求修复的变更及关联影响；BASE_BRANCH={BASE_BRANCH}。代码视图一致性与文件:行号引用按 /tester 技能 Step 4/5 与纪律 8 执行。完成后通知 team lead。"
+    prompt: "你是开发团队的测试工程师。执行 /tester 技能（回归测试模式）。启动序号 = {tester 启动次数}（写入报告「测试基准」启动序号行）。仅回归 reviewer（及 data-expert，若本轮启用）要求修复的变更及关联影响；BASE_BRANCH={BASE_BRANCH}。代码视图一致性与文件:行号引用按 /tester 技能 Step 4/5 与纪律 8 执行。完成后通知 team lead。"
   )
   ```
-  → `AWAIT(tester, 判据: test_report.md 已更新为本轮回归结论且含明确 ✅/❌)`，读取回归结论 → 关闭本轮 tester（发出即推进，不等回执）：
+  → `AWAIT(tester, 判据: test_report.md 含明确 ✅/❌ 回归结论 + 「结论前复核」行，且「测试基准」启动序号 = 台账记录的启动序号、HEAD = 台账记录的基准 commit)`（Phase 4 遗留的旧报告启动序号更小、HEAD 更早，不满足判据），读取回归结论 → 关闭本轮 tester（发出即推进，不等回执）：
   ```
   SendMessage(to: "tester", message: {"type": "shutdown_request"})
   ```
@@ -664,11 +683,11 @@ SendMessage(to: "data-expert", message: {"type": "shutdown_request"})
     - **IF ✅ 通过** → 继续
 
   → 当前审查轮次 += 1
-  → IF 当前审查轮次 ≤ 3 → 回到 5.1 启动新的 reviewer 实例（前置：`CONFIRM_SHUTDOWN(reviewer)`）；ELSE → 转「超限暂停」
+  → IF 当前审查轮次 ≤ 审查轮次上限 → 回到 5.1 启动新的 reviewer 实例（前置：`CONFIRM_SHUTDOWN(reviewer)`）；ELSE → 转「超限暂停」
 
 **超限暂停（审查轮次耗尽）：**
   → **暂停**，展示 review_report.md 和 findings.md，请求人工介入。请选择：
-    1) 追加 1 轮（轮次上限 +1 后继续，含召回 dev 修复）
+    1) 追加 1 轮：`审查轮次上限 += 1`（同步改写运行状态块，findings.md 记「用户追加审查轮次，上限 → {新值}」），然后从 5.4.1 继续（召回 dev 修复 → 5.4.2 tester 回归 → 当前审查轮次 += 1）并回到 5.1。本次追加只放开一轮，再次耗尽仍回到本暂停；回归重试上限不随之改变；未经用户在此选择，lead 不得调整上限
     2) 接受当前状态进入下一 Phase（风险自担，记录 findings.md）
     3) 终止流程（走异常终止路径，见终止条件表）
   暂停期间无存活成员待命（人工选追加轮次时 dev 按需重启）。人工选择后的任务状态归属：选 1 → Phase5 保持 in_progress 继续循环；选 2 → 更新 findings.md 进度表：Phase 5 → completed 并在 findings.md 记「审查超限接受，风险自担」后进入 Phase 6；选 3 → 保持 in_progress，走异常终止路径。
@@ -763,7 +782,12 @@ SendMessage(to: "data-expert", message: {"type": "shutdown_request"})
 
 ### 上线就绪
 - 卡点核对: ✅ {N} / ⚠️ 需人工确认 {N} / ❌ 未通过 {N}（工单见 release_checklist.md）
+
+### 成员回收
+- 全部成员已正常关闭 / 回收未完成: {name 清单，见 findings.md 回收记录；请在 /tasks 面板手动停止}
 ```
+
+> 6.2 在 6.5 之前输出时，「成员回收」节按 6.1 的核对结果填写（孤儿候选记「待 6.5 回收」），6.5 完成后在 6.7 最终提示中给出最终结果。
 
 ### 6.3 条件触发 CLAUDE.md 更新
 检查 findings.md 是否包含新发现的项目模式/约定/陷阱：
@@ -785,10 +809,14 @@ TaskStop(task_id: "{角色name}")
 ```
 
 处理规则：
-1. 逐个回收，记录每次返回的成功/失败
-2. 返回失败或提示 task 不存在 → 说明该成员实际已停止，视为已回收，不必再处理
+1. 逐个回收，按返回结果三分记台账（与 `CONFIRM_SHUTDOWN` 第 3 条同一口径）：
+   - 返回成功 → 「TaskStop 回收」
+   - 明确提示「无此任务 / No task found」→ 成员实际已停止，「确认关闭」
+   - **其他错误**（超时、权限、未知异常）→ 不能证明成员已停止：再 `ListAgents` 一次，已消失 → 「确认关闭」；仍在列表 → 重试一次 `TaskStop`，仍失败则记「回收未完成」，**不得当作已回收**
+2. 全部处理完后再执行一次 `ListAgents` 总核对：仍列出的本流程成员一律改记「回收未完成」
 3. 把「成员 name + 触发场景（哪个 Phase、为何未正常 shutdown）+ 回收结果」记入 `.claude/workspace/findings.md`，作为流程改进输入（归档在 6.6 才执行，此时文件仍在原路径）
 4. 6.1 的 ListAgents 已无本流程成员、无需回收时：仅输出一行确认（"全部成员已正常关闭，无需回收"）
+5. 存在「回收未完成」成员时：6.2 汇总报告「成员回收」节与 6.7 最终提示必须逐个列出这些仍存活或状态未知的成员，提示用户经 `/tasks` 面板手动停止；**不得声称全部成员已关闭**
 
 > 用户侧交叉验证入口：`/tasks` 面板列出全部在跑的 agent，在面板中选中并按 `x` 亦可停止。若 6.5 执行后 `/tasks` 里仍能看到本次任务的成员，属异常，需报告用户。
 
@@ -812,6 +840,7 @@ mv .claude/workspace/release_checklist.md .claude/workspace/archive/{目录}/ 2>
 ### 6.7 最终提示
 - feature 分支已就绪
 - 上线工单：`archive/{目录}/release_checklist.md`；**存在 ❌ 未通过或 ⚠️ 需人工确认卡点时在此逐条列出**，提醒用户上线前处理
+- 成员回收结果：全部关闭，或**逐个列出 6.5 记「回收未完成」的成员**并提示在 `/tasks` 面板手动停止
 - 是否需要合并到目标分支或创建 PR
 
 （进度表的 Phase 6 → completed 已在 6.6 归档前写入，此处不再改动已归档文件）
@@ -850,12 +879,12 @@ mv .claude/workspace/release_checklist.md .claude/workspace/archive/{目录}/ 2>
 
 1. **tester 和 reviewer 阶段不可因质量原因省略** — 唯一例外是 `START_PHASE=reviewer` 按 Phase 4 起首守卫跳过 Phase 4（且 reviewer BLOCK 后修复仍必须经 tester 回归，见 5.4.2）
 2. **reviewer BLOCK 后修复必须经过 tester 回归** — 防止修复引入新 bug
-3. **闭环超限必须暂停** — 不允许无限循环消耗 token
+3. **闭环超限必须暂停** — 不允许无限循环消耗 token；测试 / 审查轮次上限以运行状态块为准（默认 3），WHILE、末轮判断与「追加 1 轮」都引用同一值，上限只能由用户在超限暂停选「追加 1 轮」时 +1，lead 不得自行放宽
 4. **成员完成任务后必须立即发 shutdown_request，发出即推进、不等回执** — "X has shut down" 不会唤醒已结束回合的 lead（回执不丢、只是迟到），被动等待必然停摆；关闭状态只在同名重启前（`CONFIRM_SHUTDOWN`）与 6.1（一次 ListAgents）两处主动核对，协议细节见「关闭成员」节
-5. **流程结束必须执行孤儿成员回收（6.5）** — 团队目录自动清理不代表成员已停止；teammate 是 in-process 的，只能用 `TaskStop(task_id: name)` 回收，`ps`/`kill` 一律无效
+5. **流程结束必须执行孤儿成员回收（6.5）** — 团队目录自动清理不代表成员已停止；teammate 是 in-process 的，只能用 `TaskStop(task_id: name)` 回收，`ps`/`kill` 一律无效；TaskStop 只有「成功」或「无此任务」才算回收，其他错误须 ListAgents 复核，仍存活或状态未知的成员记「回收未完成」并出现在最终报告中，不得伪报成功
 6. **不替代角色执行** — 编排指挥官只调度，不直接编码/测试/审查
 7. **纠偏与修复一律按需新实例、完成即关** — tech-lead 纠偏、dev 修复每次都是 Agent() 新实例（纠偏模式/清单驱动模式），任务完成立即 shutdown；不留跨阶段待命成员，测试/审查期间团队内没有任何可改码的存活成员。例外：analyst（1.2）/ tech-lead（2.2）在等待用户确认并按答复更新自身产物期间的**同阶段**短暂存活，不属于跨阶段待命
-8. **tester 提交报告前必须 verify 代码视图未变** — 通过 git diff 与测试基准对比；如发现测试期间代码被改动（用户手工改动/外部进程），立即暂停而非继续写结论
+8. **tester 提交报告前必须 verify 代码视图未变** — 通过被测代码快照（HEAD + 未提交改动，排除 workspace 与测试路径）与测试基准对比；如发现测试期间代码被改动（用户手工改动/外部进程，含未提交改动），立即暂停而非继续写结论
 9. **启动同名新一轮成员前必须先 `CONFIRM_SHUTDOWN(前一轮)`** — ListAgents 主动核对，60 秒内未消失即 TaskStop；不同名成员的启动不等前一成员关闭。否则同名冲突（latest-wins 抢占或自动改名，随版本而异）导致成员定位混乱、旧实例失管（见「启动成员」节；TaskStop 回收失败的孤儿脱困按「关闭成员」节 `CONFIRM_SHUTDOWN` 第 4 条两种行为分别处理）
 10. **--from=X 等于声明 X 之前的角色不主动启动** — 详见 §6.1 表（dev → 清单驱动模式；tech-lead → 纠偏模式）；禁止"--from=X 就完全禁用 X 之前的角色"的简化理解，会破坏闭环可达性
 11. **--from in [dev, tester, reviewer] 时沿用当前分支** — 不新建 feature 分支；启动时打印当前分支供用户确认
@@ -863,8 +892,8 @@ mv .claude/workspace/release_checklist.md .claude/workspace/archive/{目录}/ 2>
 13. **Phase 6 归档/孤儿检查无论起步 phase 如何都必须执行** — 包括 --from=reviewer 一次 APPROVE 的最短路径
 14. **data-expert 条件触发、与 reviewer 同档阻断** — 逐轮探测见 Phase 5.0，与 reviewer 并行启动见 5.1，结论合并规则（任一 BLOCK 即本轮 BLOCK）见 5.4
 15. **团队隐式存在，进度走 findings.md 进度表** — 不创建/删除团队、不传 `team_name`、不用 Task 系列工具（见 0.4 / 0.5）
-16. **阶段完成判定一律走 `AWAIT(成员, 判据)` 协议** — teammate 的 idle 通知不携带产出内容，判据是**产物落盘 + 有结论性章节**，idle 通知仅为触发信号；禁止编写「等成员把结果回传」的等待逻辑（subagent 语义），否则永久阻塞。成员已 idle 但产物不达标时按协议第 3 步补齐，连续 2 次不达标即暂停请求人工；单成员 15 分钟无进展触发超时兜底。协议全文见「阶段完成判定协议」节
+16. **阶段完成判定一律走 `AWAIT(成员, 判据)` 协议** — teammate 的 idle 通知不携带产出内容，判据是**产物落盘 + 有结论性章节 + 本轮匹配**（tester 报告的启动序号、reviewer / data-expert 报告的审查轮次，加基准 commit，等于启动时写入台账的期望值；上一轮的完整报告不能满足新一轮判据），idle 通知仅为触发信号；禁止编写「等成员把结果回传」的等待逻辑（subagent 语义），否则永久阻塞。成员已 idle 但产物不达标时按协议第 3 步补齐，连续 2 次不达标即暂停请求人工；单成员 15 分钟无进展触发超时兜底。协议全文见「阶段完成判定协议」节
 17. **上线就绪核对（6.0）只出工单不拦截** — ✅ 必须附证据出处（文件:行号/章节），❌/⚠️ 卡点在 6.7 逐条列出交用户决策；不触发修复闭环，上线决策属于人
 18. **工作树洁净后才进入 Phase 1-5（0.3）** — 任一入口带未提交改动都先基线提交或退出；全流程入口从非 BASE_BRANCH 起步须用户确认 diff 基准放大
-19. **运行状态与成员实例台账落盘（0.5）** — 轮次/计数/DATA_CHANGE 变更同步改写运行状态块，每次 Agent() 启动 / shutdown_request 已发 / 确认关闭 / TaskStop 回收记台账；压缩后以此恢复，6.1 回收核对只认台账
+19. **运行状态与成员实例台账落盘（0.5）** — 轮次/轮次上限/计数/DATA_CHANGE 变更同步改写运行状态块，每次 Agent() 启动（tester 附启动序号、reviewer / data-expert 附期望轮次，均附基准 commit）/ shutdown_request 已发 / 确认关闭 / TaskStop 回收 / 回收未完成记台账；压缩后以此恢复，AWAIT 本轮匹配与 6.1 回收核对只认台账
 20. **修复实例的「方案级问题 / 争议项」上报有通路** — 按「修复实例上报处理」节处理：方案级问题启 tech-lead 纠偏，争议项由 team lead 裁决，不让 dev 硬改也不让它空等超时

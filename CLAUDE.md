@@ -68,7 +68,7 @@ team (编排，fable)
    所有过程文件路径都是硬编码的，角色之间通过它们传递状态：
    - `task_plan.md`（analyst 产出）
    - `architecture.md`（tech-lead 产出 / `/dev` 直入时由 dev 自写简版）
-   - `findings.md`（多角色追加：调研结论、纠偏指令、修改记录、`DATA_CHANGE` 探测结论；统一条目格式 `## [角色][Phase N] 标题（YYYY-MM-DD）`，格式头由 team Phase 0.2 写入。唯一可原地改写的条目是 team 的「进度跟踪」：进度表 + 运行状态块 + 成员实例台账，是 team lead 上下文压缩后的恢复来源，6.1/6.5 回收核对只认台账）
+   - `findings.md`（多角色追加：调研结论、纠偏指令、修改记录、`DATA_CHANGE` 探测结论；统一条目格式 `## [角色][Phase N] 标题（YYYY-MM-DD）`，格式头由 team Phase 0.2 在旧产物处理**之后**写入——它本身在下游产物清单里，先写会让空工作区误触发脏工作区确认。唯一可原地改写的条目是 team 的「进度跟踪」：进度表 + 运行状态块（含测试/审查轮次上限、tester 与 data-expert 启动次数）+ 成员实例台账（tester 启动行带启动序号、reviewer / data-expert 启动行带期望轮次，均带基准 commit），是 team lead 上下文压缩后的恢复来源，AWAIT 本轮匹配与 6.1/6.5 回收核对只认台账）
    - `progress.md`（dev 写入）
    - `test_report.md` / `review_report.md`（tester / reviewer 产出）
    - `data_review.md`（data-expert 产出，**仅 `DATA_CHANGE=true` 时存在**；Phase 0.2 清理与 Phase 6 归档都把它与 `review_report.md` 同档处理）
@@ -87,11 +87,11 @@ team (编排，fable)
    - tester / reviewer / data-expert（命中时）**每轮重启新实例**（不要复用旧的）
    - tech-lead 与 dev **不跨阶段存活**：Phase 2/3 各自完成后立即 shutdown；纠偏（tech-lead）与修复（dev 清单驱动模式）一律按需新实例、即用即关，同名重启前须先 `CONFIRM_SHUTDOWN`（ListAgents 主动核对，60 秒内未消失即 TaskStop）；不同名成员的启动不等前一成员关闭
    - **shutdown 回执不可被动等待**（2.1.273 实证、2.1.305 复核）："X has shut down" 与 idle 通知只在 lead 正在跑回合时投递，不会唤醒已结束回合的 lead，回执会迟到数分钟而非丢失，此时成员早已退出（ListAgents 查不到、TaskStop 报无此任务）。关闭成员一律「发出即推进」，不要写回「收到 shutdown_approved 后再继续」的等待写法——那会停摆到用户手动输入。设计记录见本地 `docs/20260916_shutdown-active-check.md`（含禁止回退清单）
-   - 流程结束（含异常终止）必须执行 Phase 6.5 **孤儿成员回收**：teammate 是 in-process 的，`ps aux | grep agent-name` 恒为空、`kill <PID>` 无效，唯一手段是对 6.1 一次 `ListAgents` 仍列出的成员逐个 `TaskStop(task_id: "{name}")`（团队目录本身随会话结束自动清理，不需要也无法手动删除）
-   - 阶段完成判定统一走 **`AWAIT(成员, 判据)` 协议**（team/SKILL.md「阶段完成判定协议」节，全流程 14 个调用点，含 1.2/2.2 成员按用户答复更新产物后的等待，以及「修复实例上报处理」中的 tech-lead 纠偏等待）：teammate 的 idle 通知**不携带产出内容**，判据是产物落盘 + 有结论性章节，idle 通知仅为触发信号。写「等成员把结果回传」的等待逻辑会永久阻塞。新增等待点时必须引用该协议并声明判据，不要另起等待写法
+   - 流程结束（含异常终止）必须执行 Phase 6.5 **孤儿成员回收**：teammate 是 in-process 的，`ps aux | grep agent-name` 恒为空、`kill <PID>` 无效，唯一手段是对 6.1 一次 `ListAgents` 仍列出的成员逐个 `TaskStop(task_id: "{name}")`（团队目录本身随会话结束自动清理，不需要也无法手动删除）。TaskStop 结果三分（6.5 与 `CONFIRM_SHUTDOWN` 第 3 条同口径）：成功 / 明确「无此任务」才算已回收，其他错误须 ListAgents 复核，仍存活或状态未知的记「回收未完成」并出现在 6.2/6.7 报告里，不要写回「返回失败即视为已回收」
+   - 阶段完成判定统一走 **`AWAIT(成员, 判据)` 协议**（team/SKILL.md「阶段完成判定协议」节，全流程 14 个调用点，含 1.2/2.2 成员按用户答复更新产物后的等待，以及「修复实例上报处理」中的 tech-lead 纠偏等待）：teammate 的 idle 通知**不携带产出内容**，判据是产物落盘 + 有结论性章节 + **本轮匹配**（tester 报告「测试基准」的启动序号、reviewer / data-expert 报告的审查轮次，加基准 commit，等于启动时写入台账的期望值；tester 的「测试轮次」保持闭环语义不作匹配键；轮间不清理旧报告，复审模式要读上一轮的基准 commit，所以旧报告必须靠匹配排除而不是靠删除），idle 通知仅为触发信号。写「等成员把结果回传」的等待逻辑会永久阻塞。新增等待点时必须引用该协议并声明判据，不要另起等待写法
 
 5. **质量闭环上限 = 3 轮**
-   tester↔dev 和 reviewer↔dev↔tester 闭环超过 3 轮必须暂停请求人工。修改这个阈值要同时改 team/SKILL.md 的两处 WHILE 循环。Phase 5 的 5.4.2 回归子循环另有独立上限（同一审查轮内重试 1 次，第二次回归仍未通过即超限暂停），与轮次上限共同构成硬边界。
+   tester↔dev 和 reviewer↔dev↔tester 闭环超过 3 轮必须暂停请求人工。上限以 findings.md 运行状态块的「测试轮次上限 / 审查轮次上限」为唯一来源（默认 3，在 Phase 4/5 头部各声明一次），WHILE、末轮判断与超限暂停的「追加 1 轮」都引用同一值，不再写死数字；用户选「追加 1 轮」只 +1 并持久化，lead 不得自行放宽。修改默认值要同时改 Phase 4/5 头部声明与 0.5 运行状态块模板。Phase 5 的 5.4.2 回归子循环另有独立上限（同一审查轮内重试 1 次，第二次回归仍未通过即超限暂停），与轮次上限共同构成硬边界，追加审查轮次不改变它。
 
 6. **reviewer BLOCK 后修复必须经过 tester 回归**（防止修复引入新 bug）
    这是 Phase 5 的一个非显然规则，写代码或改流程时容易省掉这步。
@@ -103,7 +103,7 @@ team (编排，fable)
    仅 `DATA_CHANGE=true` 时启动（探测逐轮重跑，false→true 单向升级）；其 BLOCK 与 reviewer BLOCK 等价（任一 BLOCK 即本轮 BLOCK），dev 修复时合并两份报告清单。
 
 9. **Git 提交纪律贯穿闭环**（team Phase 0.0/0.3、dev Step 4/修复模式、tester Step 5）
-   team 启动时探测 `BASE_BRANCH`（main/master，或 `--base=` 显式指定），主干上不执行任何提交类操作（0.3 拦截沿用主干）；0.3 的工作树洁净检查对所有入口生效（未提交改动先基线提交 `chore: baseline` 或退出，全流程入口从非主干起步须用户确认 diff 基准放大）；dev 完成编码/修复、tester 产出测试代码后均在 feature 分支内提交（排除 `.claude/workspace`，禁止 push）；reviewer 纯只读开审，审查范围 = 已提交 diff + 未提交改动（正常流程下应为空，如有则并入范围并在报告标注来源待查）。workspace 不入库的主防线是 team 0.2 幂等写入 `.git/info/exclude`（独立 /dev 入口自行补齐）；提交命令中的 `:(exclude)` 是独立入口未经 0.2 时的兜底——**两层都不要随手删**。
+   team 启动时探测 `BASE_BRANCH`（main/master，或 `--base=` 显式指定），主干上不执行任何提交类操作（0.3 拦截沿用主干）；0.3 的工作树洁净检查对所有入口生效（未提交改动先基线提交 `chore: baseline` 或退出，全流程入口从非主干起步须用户确认 diff 基准放大）；dev 完成编码/修复、tester 产出测试代码后均在 feature 分支内提交（排除 `.claude/workspace`，禁止 push）。dev Step 4 的格式化与编译排在优化技能与自查**之后**，提交即编译通过的同一份代码，Step 4.5 数据验证的修复也要追加提交，team 对 dev 的 AWAIT 含「工作树洁净」；tester 的被测快照 = HEAD + 未提交改动（`git status --porcelain` / `git diff HEAD`，排除 workspace 与测试路径），结论前复核比对整份快照而不只比 `BASE...HEAD`；reviewer 纯只读开审，审查范围 = 已提交 diff + 未提交改动（正常流程下应为空，如有则并入范围并在报告标注来源待查）。workspace 不入库的主防线是 team 0.2 幂等写入 `.git/info/exclude`（独立 /dev 入口自行补齐）；提交命令中的 `:(exclude)` 是独立入口未经 0.2 时的兜底——**两层都不要随手删**。
 
 10. **数据验证通道（可选能力）**
    dev（Step 4.5 数据验证）与 tester（Step 4.5 数据断言）依赖目标项目 CLAUDE.md 的 `Database Access` 节声明：MCP 只读工具名（DBHub 多源命名 `execute_sql_{source_id}`，约定 source id 用 `dev` / `test`）、迁移执行方式、分片拓扑、环境自证锚点。三条不变量：
@@ -123,7 +123,7 @@ team (编排，fable)
 13. **修复实例的上报通路（team「修复实例上报处理」节 + dev 修复模式第 3 条）**
    Phase 4/5 的 dev 修复实例遇到「方案级问题」上报后由 team 启 tech-lead 纠偏，「争议项」（如测试用例本身错误）由 team lead 裁决、tester 下一轮修正用例；清单全部裁决跳过时 AWAIT dev 不再要求新提交。不要删掉这两条通路换回「dev 只能硬改或等超时」。
 
-14. **拒绝防御式编码是 dev 与 reviewer 共用的一份清单**（dev/SKILL.md「编码原则」+ Step 4 第 4 条自查 + 纪律 1/7、sub-dev prompt 模板内联；reviewer/SKILL.md Step 2 HIGH「防御式编码」组 + 报告「防御式编码扫描」表 + 纪律 6；team/SKILL.md 3.2 dev 启动 prompt 第 1 条的加固边界）
+14. **拒绝防御式编码是 dev 与 reviewer 共用的一份清单**（dev/SKILL.md「编码原则」+ Step 4 第 2 条自查 + 纪律 1/7、sub-dev prompt 模板内联；reviewer/SKILL.md Step 2 HIGH「防御式编码」组 + 报告「防御式编码扫描」表 + 纪律 6；team/SKILL.md 3.2 dev 启动 prompt 第 1 条的加固边界）
    口径：边界校验一次、内部信任契约、错误显式向上传播；每段容错逻辑必须能指出 architecture.md 失败路径设计或项目 CLAUDE.md 依据（dev 在 findings.md 记「容错依据」，reviewer 逐条核实）。五类禁止项中吞异常 / 静默兜底按 HIGH BLOCK，冗余判空 / 投机性弹性 / 过度断言为 HIGH〔规范类〕（搭车修复或遗留必修项，不单独烧一轮）。dev 纪律 1 的"实现层补漏"只许补系统边界，不是给内部调用链加判空的许可；reviewer 的修复建议不得是"补一层判空/try-catch"。增删类别或改分级要同步 dev（含 sub-dev 模板）、reviewer 与 team 3.2 三处。
 
 ## 已知陷阱
