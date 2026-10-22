@@ -822,10 +822,10 @@ TaskStop(task_id: "{角色name}")
 
 ### 6.6 归档（放在回收核对之后，保证 6.3/6.5 读写的 findings.md 仍在原路径）
 
-**先更新 findings.md 进度表：Phase 6 → completed**（必须在 mv 之前，归档后原路径不再有该文件），再执行归档：
+**先更新 findings.md 进度表：Phase 6 → completed**（必须在 mv 之前，归档后原路径不再有该文件），再执行归档。`{目录}` = `{YYYYMMDD_HHMMSS}_{简短描述}`，执行前确定一次，下列命令与 6.7 沿用同一值——带时分秒是为了同日同需求重跑（如收尾后再跑 `--from=reviewer`）时不 mv 覆盖上一次归档：
 ```bash
 # --from 短路径下部分产物可能不存在，缺失即跳过
-mkdir -p .claude/workspace/archive/{YYYYMMDD}_{需求简称}
+mkdir -p .claude/workspace/archive/{目录}
 mv .claude/workspace/task_plan.md .claude/workspace/archive/{目录}/ 2>/dev/null || true
 mv .claude/workspace/architecture.md .claude/workspace/archive/{目录}/ 2>/dev/null || true
 mv .claude/workspace/progress.md .claude/workspace/archive/{目录}/ 2>/dev/null || true
@@ -837,8 +837,11 @@ mv .claude/workspace/data_review.md .claude/workspace/archive/{目录}/ 2>/dev/n
 mv .claude/workspace/release_checklist.md .claude/workspace/archive/{目录}/ 2>/dev/null || true
 ```
 
+mv 完成后把 6.2 汇总报告写入 `archive/{目录}/summary.md`，「成员回收」节按 6.5 的最终结果填写（不保留「待 6.5 回收」）——6.2 只输出到对话，这是归档里唯一一份任务汇总。
+
 ### 6.7 最终提示
 - feature 分支已就绪
+- 任务汇总：`archive/{目录}/summary.md`
 - 上线工单：`archive/{目录}/release_checklist.md`；**存在 ❌ 未通过或 ⚠️ 需人工确认卡点时在此逐条列出**，提醒用户上线前处理
 - 成员回收结果：全部关闭，或**逐个列出 6.5 记「回收未完成」的成员**并提示在 `/tasks` 面板手动停止
 - 是否需要合并到目标分支或创建 PR

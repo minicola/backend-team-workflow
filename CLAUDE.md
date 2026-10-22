@@ -73,6 +73,7 @@ team (编排，fable)
    - `test_report.md` / `review_report.md`（tester / reviewer 产出）
    - `data_review.md`（data-expert 产出，**仅 `DATA_CHANGE=true` 时存在**；Phase 0.2 清理与 Phase 6 归档都把它与 `review_report.md` 同档处理）
    - `release_checklist.md`（team Phase 6.0 产出的上线工单：卡点三档结论 ✅/⚠️/❌ + 上线步骤 + 回滚预案；与其他报告同档清理/归档，只出工单不拦截流程）
+   - 归档目录：6.6 正常收尾 → `archive/{YYYYMMDD_HHMMSS}_{简短描述}/`（上列文件 + team 写入的 `summary.md`，即 6.2 汇总报告的最终版）；0.2 脏工作区选归档 → `archive/{YYYYMMDD_HHMMSS}_orphaned/`。两者都带时分秒，防同日重跑 mv 覆盖
    改动文件名或目录会同时打破多个 skill，需要全局替换。
 
 2. **每个角色必读"目标项目"根目录的 CLAUDE.md**（注意：不是本仓库这份）
