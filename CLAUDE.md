@@ -11,32 +11,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 不存在 `npm test` / `mvn compile` 之类的入口。提交前的主要"验证"是把插件装到一个真实项目上跑一遍 `/team` 或 `/dev`；此外 `evals/` 下有针对 Phase 0 参数解析/前置校验的 `claude plugin eval` 回归用例（该 CLI 功能目前 early access，未开启时仅作为文档化的验收标准，详见 `evals/README.md`）。
 
-## 常用操作
-
-```bash
-# 装到本地（开发期，从这个目录直装）
-/plugin marketplace add ~/claude-plugin/backend-team-workflow
-/plugin install backend-team-workflow
-
-# 改完 SKILL.md 后热生效（不需要重启 Claude Code）
-/reload-plugins
-
-# 启动总入口（在目标业务项目里使用）
-/backend-team-workflow:team <需求描述或PRD路径>
-
-# 任意节点切入（跳过上游 phase）
-/backend-team-workflow:team --from=tech-lead [<需求补充>]   # 预置 task_plan.md，从技术设计开始
-/backend-team-workflow:team --from=dev [<需求补充>]         # 预置 task_plan + architecture，从编码开始（含测试/审查闭环）
-/backend-team-workflow:team --from=tester [<需求补充>]      # 已有代码，跑测试+审查闭环
-/backend-team-workflow:team --from=reviewer [<需求补充>]    # 已有代码，仅做一次审查（含 P0 安全审查）
-/backend-team-workflow:team --base=develop <...>            # 主干不是 main/master 时显式指定 diff 基准分支（可与 --from 组合）
-```
-
 `--from=X` 等于声明 X 之前的角色不主动启动，但若下游闭环（tester BLOCK / reviewer BLOCK）需要它们，按需首次启动进入"清单驱动模式"。完整决策矩阵见 `skills/team/SKILL.md` §6.1 表。
-
-## 前置依赖（外部技能/插件）
-
-工作流引用 5 个非本插件自带的技能：`ralph-loop`（插件，dev 编译迭代闭环）、`code-simplifier` 与 `simplify`（dev 代码优化，Step 4 提测/修复前执行）、`claude-md-management` 的 `/revise-claude-md`（Phase 6 更新项目 CLAUDE.md，可选）、`release-checklist`（可选，Phase 6.0 上线卡点核对；缺失时降级为读项目根 `release-checklist.yaml`，再缺则用内置通用清单）。目标环境未装齐时不会卡死：各角色按各自 SKILL.md 声明的降级路径执行（跳过并在报告标注「技能缺失未执行」/ 退化为手动编译循环）。
 
 ## 架构：6 角色 + Agent Team（含 1 个条件触发成员）
 
