@@ -15,6 +15,7 @@
 | `tester` | 测试工程师 | 开发完成后写并跑测试（含集成边界、test 库真实数据取样） |
 | `reviewer` | 代码审核 | 测试通过后做最终审查（含坏味道与防御式编码扫描） |
 | `data-expert` | 数据治理审查员 | **条件触发**：变更涉及数据模型时，Phase 5 与 reviewer 并行启动（两者均为纯只读审查），审查迁移/索引/一致性 |
+| `tidy` | 归档治理（工具，非团队成员） | `/team` 收尾自动以 `--auto` 执行；也可随时手动运行，交互整理存量 |
 
 ## 安装
 
@@ -42,6 +43,25 @@
 | `claude-md-management`（可选） | Phase 6 用 `/revise-claude-md` 更新项目 CLAUDE.md | 提示用户手动更新 |
 | `release-checklist`（可选） | Phase 6.0 上线卡点核对 + 生成上线工单 | 降级为读项目根 `release-checklist.yaml` 逐项核对，再缺则用内置通用卡点清单，产出 `release_checklist.md` |
 
+## 工作区与归档治理
+
+过程文件都在目标项目的 `.claude/workspace/`（已写入 `.git/info/exclude`，不入库）：
+
+- 根目录：在途产物（`task_plan.md` / `architecture.md` / `findings.md` / `progress.md` / 各报告），以及 `attachments/`（各角色核心产物之外的过程文件，如分片 DDL、PoC 报告、配图）
+- `archive/{YYYYMMDD_HHMMSS}_{需求}/`：`/team` 收尾归档，`summary.md` 顶部带「归档元数据」（分支、基准分支、HEAD、结论）
+- `archive/INDEX.md`：全部归档的索引，由 `tidy` 按元数据重建
+- `archive/_expired/`：过期区
+
+过期规则（两段式自动）：归档的 HEAD 已合入基准分支且超过保留期 → 移入 `_expired/`；在 `_expired/` 满宽限期 → 删除，删除记录保留在 INDEX。信息不全的归档不会被自动处理，只列为人工候选。
+
+```bash
+git config backend-team-workflow.archiveRetentionDays 90   # 保留期，缺省 90 天
+git config backend-team-workflow.archivePurgeDays 30       # 宽限期，缺省 30 天
+/backend-team-workflow:tidy                                # 交互整理存量：遗留归档补元数据、散落文件归并、人工候选处置
+```
+
+`tidy` 只管理本工作流的文档：workspace 中的其他文件只列出，不移动也不删除；恢复过期归档只需把目录从 `_expired/` 移回 `archive/`。
+
 ## 开发
 
 修改 `skills/<role>/SKILL.md` 后执行 `/reload-plugins` 即可热生效。
@@ -50,4 +70,4 @@
 
 ## 注意
 
-本插件接管 7 个 skill 后，`~/.claude/skills/{analyst,dev,reviewer,team,tech-lead,tester,data-expert}/` 应当移除以避免重复加载。
+本插件接管 8 个 skill 后，`~/.claude/skills/{analyst,dev,reviewer,team,tech-lead,tester,data-expert,tidy}/` 应当移除以避免重复加载。

@@ -144,3 +144,4 @@ user-invocable: true
 4. **在线安全优先** — 大表 DDL、加非空列、删列改类型必须评估锁与线上影响，不得假设"表很小"而放行，除非数据量有据可查
 5. **审查范围仅限数据层本次变更** — 不评审无关代码，不与 reviewer 的代码规范职责重叠（执行计划/索引角度的数据访问问题由你复核，Spring/坏味道由 reviewer 负责）
 6. **目标驱动** — 以"生产可安全上线 + 可回滚"为唯一判定基线
+7. **附属过程文件写入 `.claude/workspace/attachments/`** — data_review.md 与 findings.md 之外需要落盘的过程文件（如 EXPLAIN 输出、数据量统计）一律写入该目录，不散落在 workspace 根；随 /team 6.6 整体归档

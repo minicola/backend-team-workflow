@@ -1,6 +1,6 @@
 # 人工验收场景（需真实团队运行）
 
-以下场景覆盖 2026-10-21 流程审计（WF-01 至 WF-06）修正的控制流。它们都要跑到 Phase 0.2 之后，依赖交互式会话与 `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1`，`claude plugin eval` 沙箱（headless）会先撞上 0.1b 门禁，因此只能在真实项目上人工验收。每个场景给出前置、操作与判定；判定只认文件与 git 状态，不认 lead 的口头结论。
+以下场景 A-E 覆盖 2026-10-21 流程审计（WF-01 至 WF-06）修正的控制流，F 覆盖 v0.8.0 归档治理（其中 tidy 部分不经 team 门禁，可直接在临时仓库验收）。A-E 都要跑到 Phase 0.2 之后，依赖交互式会话与 `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1`，`claude plugin eval` 沙箱（headless）会先撞上 0.1b 门禁，因此只能在真实项目上人工验收。每个场景给出前置、操作与判定；判定只认文件与 git 状态，不认 lead 的口头结论。
 
 验证分三类，报告时区分开，**不要把静态检查或模拟验证表述成完整团队运行通过**：
 
@@ -15,6 +15,7 @@
 | C 未提交代码漂移 | WF-02 / WF-03 | ⓕⓜ |
 | D 追加轮次 | WF-06 | ⓜ |
 | E 回收调用失败 | WF-05 | ⓗ |
+| F 归档治理 | v0.8.0 tidy / 6.6 / 0.2 | ⓕⓜ |
 
 ## A 空工作区初始化（team 0.2）
 
@@ -25,7 +26,7 @@
 判定：
 1. lead **不输出**「检测到 workspace 中已有以下下游产物」的三选一提示
 2. 进入 Phase 1 前 `findings.md` 存在，首行为 `# Findings`，格式头之后紧接 `## [team][Phase 0] 进度跟踪` 条目，含进度表、运行状态块（`当前测试轮次 / 测试轮次上限 | 0 / 3`、`tester 启动次数 / data-expert 启动次数 | 0 / 0`）与成员实例台账
-3. 反向用例：预置一份旧 `review_report.md` 再启动，必须出现三选一提示；选 3 后 workspace 内容与启动前逐字节一致（`diff -r`），且未创建团队成员；选 1 后旧文件进入 `archive/*_orphaned/`，新 `findings.md` 格式头与进度区完整
+3. 反向用例：预置一份旧 `review_report.md` 再启动，必须出现三选一提示；选 3 后 workspace 内容与启动前逐字节一致（`diff -r`），且未创建团队成员；选 1 后旧文件进入 `archive/*_orphaned*/`（目录名带旧需求后缀，见场景 F 第 5 条），新 `findings.md` 格式头与进度区完整
 
 ## B 旧报告残留（AWAIT 本轮匹配）
 
@@ -77,3 +78,21 @@
 2. 其他错误 → lead 再 ListAgents 复核；仍在列表则重试一次，仍失败记「回收未完成」
 3. 6.2「成员回收」节与 6.7 最终提示列出「回收未完成」成员并提示 `/tasks` 手动停止；没有此类成员时写「全部成员已正常关闭」
 4. 任何情况下 lead 不把一般工具错误写成「已回收」
+
+## F 归档治理（tidy / team 6.6 / 0.2）
+
+前置 ⓕ：临时 git 仓库，主干上有一个已合入的 feature 提交 `B` 和一个未合入的提交 `C`。`.claude/workspace/archive/` 下预置：
+- 归档时间早于 90 天、HEAD=`B` 的标准归档 `M`
+- 同样早于 90 天、HEAD=`C` 的标准归档 `U`
+- HEAD 写「未知」的旧归档 `K`
+- `_expired/` 下「移入 _expired」早于 30 天的 `P`，以及昨天移入的 `Q`
+- 无元数据的遗留目录 `L`，`archive/` 根下一个散文件，workspace 根下一个无关截图
+
+操作：`/backend-team-workflow:tidy --auto`；之后再运行一次无参数的 `/backend-team-workflow:tidy`。
+
+判定：
+1. `--auto`：`M` 移入 `_expired/`，且其「移入 _expired」= 今天；`P` 被删除，INDEX「已清除记录」有 `P`；`U`、`K`、`Q`、`L`、散文件、截图都不动；输出行中人工候选数 ≥ 2（`U`、`K`），未整理遗留 ≥ 1（`L`）
+2. INDEX.md 的在库 / 过期区 / 已清除三节与目录实际状态一致；再跑一次 `--auto`，结果不变（幂等）
+3. 交互模式：先出计划表、确认后才执行；`L` 补上元数据（取不到的字段写「未知」），目录名不变；截图只出现在清单里，未经逐项指定不移动、任何情况下不删除
+4. ⓜ team 6.6：归档目录包含 `attachments/`；`summary.md` 首节为「归档元数据」且 HEAD = 收尾时的 `git rev-parse --short HEAD`；6.7 转述了 tidy 的输出行
+5. ⓜ team 0.2 选 1：目录名形如 `{YYYYMMDD_HHMMSS}_orphaned_{旧需求}`，`summary.md` 只含元数据，类型 `orphaned`、结论「中断」
