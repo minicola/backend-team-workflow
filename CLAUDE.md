@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 这是一个 **Claude Code Plugin** 仓库，不是普通代码库：
 - 没有源代码、没有构建系统、没有测试
-- 产品就是 `skills/<role>/SKILL.md` 这 7 份 markdown 文件 + `.claude-plugin/plugin.json`（其中 `data-expert` 是 Phase 5 条件触发成员）
+- 产品就是 `skills/<role>/SKILL.md` 这 8 份 markdown 文件 + `.claude-plugin/plugin.json`（其中 `data-expert` 是 Phase 5 条件触发成员；`tidy` 是归档治理工具，不是 team 成员，由用户手动或 team 6.6 收尾加载）
 - "开发"= 编辑 SKILL.md 中的角色指令；"发布"= 提交并让用户重新 `/plugin install` 或 `/reload-plugins` 热生效
 
 不存在 `npm test` / `mvn compile` 之类的入口。提交前的主要"验证"是把插件装到一个真实项目上跑一遍 `/team` 或 `/dev`；此外 `evals/` 下有针对 Phase 0 参数解析/前置校验的 `claude plugin eval` 回归用例（该 CLI 功能目前 early access，未开启时仅作为文档化的验收标准，详见 `evals/README.md`）。
@@ -73,7 +73,9 @@ team (编排，fable)
    - `test_report.md` / `review_report.md`（tester / reviewer 产出）
    - `data_review.md`（data-expert 产出，**仅 `DATA_CHANGE=true` 时存在**；Phase 0.2 清理与 Phase 6 归档都把它与 `review_report.md` 同档处理）
    - `release_checklist.md`（team Phase 6.0 产出的上线工单：卡点三档结论 ✅/⚠️/❌ + 上线步骤 + 回滚预案；与其他报告同档清理/归档，只出工单不拦截流程）
-   - 归档目录：6.6 正常收尾 → `archive/{YYYYMMDD_HHMMSS}_{简短描述}/`（上列文件 + team 写入的 `summary.md`，即 6.2 汇总报告的最终版）；0.2 脏工作区选归档 → `archive/{YYYYMMDD_HHMMSS}_orphaned/`。两者都带时分秒，防同日重跑 mv 覆盖
+   - `attachments/`：各角色核心产物之外的过程文件（分片展开的 DDL、PoC 报告、配图等）的唯一位置（6 个角色纪律各一条），与其他产物同档清理/归档；`--from in [dev, tester, reviewer]` 时随 findings.md 保留
+   - 归档目录：6.6 正常收尾 → `archive/{YYYYMMDD_HHMMSS}_{简短描述}/`（上列文件 + team 写入的 `summary.md`：顶部「归档元数据」节 + 6.2 汇总报告最终版）；0.2 脏工作区选归档 → `archive/{YYYYMMDD_HHMMSS}_orphaned_{旧需求}/`（`summary.md` 只含元数据，类型 orphaned）。两者都带时分秒，防同日重跑 mv 覆盖
+   - 归档治理归 `skills/tidy/SKILL.md`（归属清单、元数据格式、过期规则的唯一口径）：`archive/INDEX.md` 是按各目录元数据重建的派生视图；两段式过期 = HEAD 已合入基准分支且超保留期（`git config backend-team-workflow.archiveRetentionDays`，缺省 90）自动移入 `archive/_expired/`，在其中满宽限期（`archivePurgeDays`，缺省 30）自动删除，信息未知只进人工候选。6.6 收尾以 `--auto` 加载，无参数为交互式存量整理。元数据格式在 team 6.6 与 tidy 各有一份，改动两处同步；非工作流文件 tidy 只列出不动，既有归档目录不重命名
    改动文件名或目录会同时打破多个 skill，需要全局替换。
 
 2. **每个角色必读"目标项目"根目录的 CLAUDE.md**（注意：不是本仓库这份）
@@ -81,7 +83,7 @@ team (编排，fable)
 
 3. **frontmatter 调用控制字段（team 与角色不同，不要混淆）**
    - `team/SKILL.md` 保留 `user-invocable: true` + `disable-model-invocation: true`：编排入口只能由用户 `/team` 主动触发。
-   - 其余 6 个角色 skill（含 data-expert）只保留 `user-invocable: true`，**不带** `disable-model-invocation`。带该字段时 skill 描述不进模型上下文、Skill 工具不可调用（官方文档 code.claude.com/docs/en/skills「Control who invokes a skill」），team 成员经 prompt 中的「执行 /X 技能」会被拦截；去掉后成员直接经 Skill 工具加载，team 的启动 prompt 不需要任何路径替换。（2026-09-03 在 Claude Code 2.1.259 实测：subagent 用 Read 读取带该字段的 SKILL.md 并未被拦截，所以「保留字段 + Read 加载」也能跑，但多一层 `${CLAUDE_PLUGIN_ROOT}` 路径拼接且无收益，不采用。）防自动触发改由各角色 description 末尾的「仅限用户显式调用或 /team 编排成员按启动指令加载，不要自动触发」声明承担，修改 description 时不要删掉这句。
+   - 其余 6 个角色 skill（含 data-expert）与 `tidy` 只保留 `user-invocable: true`，**不带** `disable-model-invocation`。带该字段时 skill 描述不进模型上下文、Skill 工具不可调用（官方文档 code.claude.com/docs/en/skills「Control who invokes a skill」），team 成员经 prompt 中的「执行 /X 技能」会被拦截；去掉后成员直接经 Skill 工具加载，team 的启动 prompt 不需要任何路径替换。（2026-09-03 在 Claude Code 2.1.259 实测：subagent 用 Read 读取带该字段的 SKILL.md 并未被拦截，所以「保留字段 + Read 加载」也能跑，但多一层 `${CLAUDE_PLUGIN_ROOT}` 路径拼接且无收益，不采用。）防自动触发改由各角色 description 末尾的「仅限用户显式调用或 /team 编排成员按启动指令加载，不要自动触发」声明承担，修改 description 时不要删掉这句。`tidy` 同理：team 6.6 要经 Skill 工具加载 `--auto`，带该字段会被拦截，其 description 末尾是「仅限用户显式调用或 /team 收尾按指令加载，不要自动触发」。
 
 4. **生命周期纪律（team/SKILL.md 末尾的"纪律"节）**
    - 成员每完成阶段任务，team 必须立即向其发 `{"type": "shutdown_request"}`，不留空闲成员
@@ -130,7 +132,7 @@ team (编排，fable)
 ## 已知陷阱
 
 - **`/dev` ≠ 精简版 `/team`**：`/dev` 走独立 skill，**不含** tester/reviewer 闭环。如需"跳过分析+设计但保留测试+审查"，使用 `/team --from=dev`（含 Phase 4/5 闭环）；`/dev` 仍是"单 dev 编码无闭环"路径。详见 `skills/team/SKILL.md` 末尾「`/dev` 与本 skill 的关系」节与 §6.1 表。
-- **命名空间冲突**：装本插件后要清理用户级旧 skill 目录 `~/.claude/skills/{analyst,dev,reviewer,team,tech-lead,tester,data-expert}/`（README 也提到过）。
+- **命名空间冲突**：装本插件后要清理用户级旧 skill 目录 `~/.claude/skills/{analyst,dev,reviewer,team,tech-lead,tester,data-expert,tidy}/`（README 也提到过）。
 - **`/dev` 与 `/team` 都会创建 feature 分支**：`{BRANCH_PREFIX}feature/{YYYYMMDD}_{简短描述}`，前缀取 `git config backend-team-workflow.branchPrefix`，缺省 `fyx/`。两者在同一项目接续使用时不要互相覆盖分支。`/team --from in [dev, tester, reviewer]` 不新建分支而沿用当前分支（当前分支为 main/master 时被 0.3 主干保护拦截，须新建 feature 分支或退出）。
 
 ## 改动 SKILL.md 的注意事项

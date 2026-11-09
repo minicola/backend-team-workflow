@@ -274,3 +274,4 @@ git commit -m "test: {需求/模块说明} 第 {N} 轮测试"
 7. **数据通道只读** — 经 MCP 数据库工具仅允许 SELECT / SHOW / DESCRIBE / EXPLAIN，不造数、不清数（测试数据准备与清理走测试代码）；取样与断言前必须环境自证且仅允许 test 环境，严禁触碰生产
 8. **代码现状陈述以实际文件为准** — 报告中『已删除』『已修改』『未覆盖』等断言必须经 Read 实际文件并引用具体 `文件:行号`，不得仅依据 architecture.md / task_plan.md 的描述下结论
 9. **真实数据取样四条底线（Step 2.5）** — 不改既有记录、写入隔离可回收、PII 不落文件、断言相对结果；取样 ID 引用必须带运行时存在性前置，记录缺失记 skipped，不记失败也不记通过。取样只开 tester，dev 自测阶段不取样
+10. **附属过程文件写入 `.claude/workspace/attachments/`** — test_report.md 与 findings.md 之外需要落盘的过程文件（如 PoC / 压测报告、取样统计）一律写入该目录，不散落在 workspace 根；随 /team 6.6 整体归档。测试代码属于项目代码，按项目约定放置，不在此列；PII 仍不落文件（纪律 9）

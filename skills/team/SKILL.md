@@ -74,7 +74,7 @@ argument-hint: "[--from=<phase>] [--base=<branch>] [<需求描述或PRD路径>]�
 
 > 一次 `AWAIT` 只针对一个成员。Phase 5 中 reviewer 与 data-expert 并行时，分别 `AWAIT`，两者都达标才进入下一步（顺序不限，先到先读）。
 
-**技能加载方式**：本插件 6 个角色 skill（analyst / tech-lead / dev / tester / reviewer / data-expert）均不带 `disable-model-invocation`（见仓库 CLAUDE.md 约定 3），各 Phase 的 Agent() prompt 中『执行 /X 技能』经 Skill 工具直接生效，无需任何路径替换。/simplify、code-simplifier、ralph-loop 等外部技能的可用性按各角色 SKILL 声明的降级路径处理。
+**技能加载方式**：本插件 6 个角色 skill（analyst / tech-lead / dev / tester / reviewer / data-expert）均不带 `disable-model-invocation`（见仓库 CLAUDE.md 约定 3），各 Phase 的 Agent() prompt 中『执行 /X 技能』经 Skill 工具直接生效，无需任何路径替换；6.6 由 team lead 自己加载的 `tidy` 同样不带该字段。/simplify、code-simplifier、ralph-loop 等外部技能的可用性按各角色 SKILL 声明的降级路径处理。
 
 **启动同名新一轮成员前必须先执行 `CONFIRM_SHUTDOWN(该名成员)`**（见「关闭成员」节），否则同名冲突的系统行为（latest-wins 抢占或自动加 `-2`/`-3` 后缀，随版本而异）都会造成成员定位混乱——旧实例可能仍在消耗 token 却无人管理。**不同名成员的启动不依赖前一成员关闭**：shutdown_request 发出后直接启动即可。
 
@@ -185,7 +185,7 @@ AWAIT 修复实例期间收到其 SendMessage 上报时：
   1) 手写 {缺失文件} 后重跑 /team --from={START_PHASE} "..."
   2) 退一档: /team --from={上游phase} "..." 让上游重新生成
   3) 完整流程: /team "..."
-  4) 从历史归档复活: ls .claude/workspace/archive/
+  4) 从历史归档复活: cat .claude/workspace/archive/INDEX.md（过期归档在 archive/_expired/）
 ```
 
 ### 0.1b 运行环境门禁（启动任何成员前必须通过）
@@ -229,7 +229,7 @@ grep -o 'CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS"[^,}]*' ~/.claude/settings.json 2>
 **第 1 步 · 旧产物处理（按 START_PHASE 分流，本步之前不写任何 workspace 文件）**
 
 **IF `START_PHASE in [analyst, tech-lead]`（全新流程语义）：**
-- 检测下游产物清单：`architecture.md` / `findings.md` / `progress.md` / `test_report.md` / `review_report.md` / `data_review.md` / `release_checklist.md`（`START_PHASE=analyst` 时清单加上 `task_plan.md`）
+- 检测下游产物清单：`architecture.md` / `findings.md` / `progress.md` / `test_report.md` / `review_report.md` / `data_review.md` / `release_checklist.md` / `attachments/`（`START_PHASE=analyst` 时清单加上 `task_plan.md`）
 - 清单中无任何文件（空工作区首次启动）→ 不提示，直接进入第 2 步
 - 若清单中任一文件存在 → 触发脏工作区交互（暂停并向用户呈现 3 选 1）：
   ```
@@ -241,12 +241,12 @@ grep -o 'CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS"[^,}]*' ~/.claude/settings.json 2>
     2) 直接覆盖
     3) 取消，先用 --from={能复用的上游phase} 复用现有产物
   ```
-  - 选 1 → `mkdir -p .claude/workspace/archive/{YYYYMMDD_HHMMSS}_orphaned/ && mv {下游产物} archive/{目录}/`
-  - 选 2 → 删除下游产物清单中所有文件
+  - 选 1 → `mkdir -p .claude/workspace/archive/{目录}/ && mv {下游产物} .claude/workspace/archive/{目录}/`，`{目录}` = `{YYYYMMDD_HHMMSS}_orphaned_{旧需求}`（旧需求取旧 task_plan.md / architecture.md 一级标题的 8-12 字摘要，均无则省略后缀）；mv 后在该目录写 `summary.md`，只含 6.6 格式的「归档元数据」节：类型 `orphaned`、结论「中断」、基准分支取本次 BASE_BRANCH，HEAD 取旧 progress.md / findings.md 台账中最后记录的提交 hash，分支取该 hash 所在的 feature 分支（`git branch --contains`，不唯一或取不到写「未知」），取不到的写「未知」
+  - 选 2 → 删除下游产物清单中所有文件（含 `attachments/` 目录）
   - 选 3 → 退出，不创建团队（此时 workspace 原有产物未被改动）
 
 **IF `START_PHASE in [dev, tester, reviewer]`（显式复用 workspace）：**
-- 保留 0.1 校验通过的前置文件 + `findings.md`
+- 保留 0.1 校验通过的前置文件 + `findings.md` + `attachments/`（同一任务的附属产物）
 - **静默清理**当前起步之后阶段的旧产物（覆盖即可，不需要交互）：
   - `dev` → 清 `progress.md` / `test_report.md` / `review_report.md` / `data_review.md` / `release_checklist.md`
   - `tester` → 清 `test_report.md` / `review_report.md` / `data_review.md` / `release_checklist.md`；`progress.md` 显式保留（支持同任务从 --from=dev 中断后接续；如与本次代码不同源，tester 会按其 Step 1 规则忽略）
@@ -778,7 +778,7 @@ SendMessage(to: "data-expert", message: {"type": "shutdown_request"})
 - 遗留必修项: {N} 项（用户已选「接受遗留」，清单见 review_report.md「遗留必修项」）/ 已在 Phase 5 立即处理（回归通过，见 findings.md 记录）/ 无
 
 ### 产出文件
-- task_plan.md / architecture.md / test_report.md / review_report.md{DATA_CHANGE ? ' / data_review.md' : ''} / release_checklist.md
+- task_plan.md / architecture.md / test_report.md / review_report.md{DATA_CHANGE ? ' / data_review.md' : ''} / release_checklist.md{attachments/ 存在 ? ' / attachments/（{文件清单}）' : ''}
 
 ### 上线就绪
 - 卡点核对: ✅ {N} / ⚠️ 需人工确认 {N} / ❌ 未通过 {N}（工单见 release_checklist.md）
@@ -835,15 +835,32 @@ mv .claude/workspace/findings.md .claude/workspace/archive/{目录}/ 2>/dev/null
 # IF DATA_CHANGE=true（data_review.md 存在时）：
 mv .claude/workspace/data_review.md .claude/workspace/archive/{目录}/ 2>/dev/null || true
 mv .claude/workspace/release_checklist.md .claude/workspace/archive/{目录}/ 2>/dev/null || true
+# 各角色核心产物之外的过程文件（DDL 展开脚本、PoC 报告、配图等）
+mv .claude/workspace/attachments .claude/workspace/archive/{目录}/ 2>/dev/null || true
 ```
 
-mv 完成后把 6.2 汇总报告写入 `archive/{目录}/summary.md`，「成员回收」节按 6.5 的最终结果填写（不保留「待 6.5 回收」）——6.2 只输出到对话，这是归档里唯一一份任务汇总。
+mv 完成后写 `archive/{目录}/summary.md`：顶部为「归档元数据」节，其后是 6.2 汇总报告（「成员回收」节按 6.5 的最终结果填写，不保留「待 6.5 回收」）——6.2 只输出到对话，这是归档里唯一一份任务汇总。元数据格式与 tidy SKILL 同一份，改动时两处同步：
+
+```markdown
+## 归档元数据
+- 类型: completed
+- 需求: {简短描述}
+- 分支: {git rev-parse --abbrev-ref HEAD}
+- 基准分支: {BASE_BRANCH}
+- HEAD: {git rev-parse --short HEAD}
+- 归档时间: {YYYY-MM-DD HH:MM}
+- 结论: {最后一轮审查结论，如 APPROVE / APPROVE（遗留必修项）/ 超限接受}
+- 移入 _expired:
+```
+
+最后加载 `/backend-team-workflow:tidy --auto` 技能：按各归档元数据重建 `archive/INDEX.md`，并执行两段式过期清理（HEAD 已合入基准分支且超保留期的归档移入 `archive/_expired/`，在 `_expired/` 满宽限期的删除）。记下它的输出行，供 6.7 使用。技能加载失败时不阻塞收尾，6.7 中注明「归档治理未执行：{原因}」。
 
 ### 6.7 最终提示
 - feature 分支已就绪
 - 任务汇总：`archive/{目录}/summary.md`
 - 上线工单：`archive/{目录}/release_checklist.md`；**存在 ❌ 未通过或 ⚠️ 需人工确认卡点时在此逐条列出**，提醒用户上线前处理
 - 成员回收结果：全部关闭，或**逐个列出 6.5 记「回收未完成」的成员**并提示在 `/tasks` 面板手动停止
+- 归档治理：原样转述 6.6 中 tidy 的输出行（移入 _expired / 删除的目录逐个列出）
 - 是否需要合并到目标分支或创建 PR
 
 （进度表的 Phase 6 → completed 已在 6.6 归档前写入，此处不再改动已归档文件）
@@ -900,3 +917,4 @@ mv 完成后把 6.2 汇总报告写入 `archive/{目录}/summary.md`，「成员
 18. **工作树洁净后才进入 Phase 1-5（0.3）** — 任一入口带未提交改动都先基线提交或退出；全流程入口从非 BASE_BRANCH 起步须用户确认 diff 基准放大
 19. **运行状态与成员实例台账落盘（0.5）** — 轮次/轮次上限/计数/DATA_CHANGE 变更同步改写运行状态块，每次 Agent() 启动（tester 附启动序号、reviewer / data-expert 附期望轮次，均附基准 commit）/ shutdown_request 已发 / 确认关闭 / TaskStop 回收 / 回收未完成记台账；压缩后以此恢复，AWAIT 本轮匹配与 6.1 回收核对只认台账
 20. **修复实例的「方案级问题 / 争议项」上报有通路** — 按「修复实例上报处理」节处理：方案级问题启 tech-lead 纠偏，争议项由 team lead 裁决，不让 dev 硬改也不让它空等超时
+21. **工作流文档有归属、归档可辨认** — 核心产物之外的过程文件一律进 `attachments/`，随 6.6 整体归档；每个归档（含 0.2 orphaned）的 `summary.md` 都带「归档元数据」；6.6 收尾经 `/tidy --auto` 重建索引并清理过期归档。workspace 中不属于本工作流的文件不移动、不删除
