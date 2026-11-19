@@ -9,7 +9,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - 产品就是 `skills/<role>/SKILL.md` 这 8 份 markdown 文件 + `.claude-plugin/plugin.json`（其中 `data-expert` 是 Phase 5 条件触发成员；`tidy` 是归档治理工具，不是 team 成员，由用户手动或 team 6.6 收尾加载）
 - "开发"= 编辑 SKILL.md 中的角色指令；"发布"= 提交并让用户重新 `/plugin install` 或 `/reload-plugins` 热生效
 
-不存在 `npm test` / `mvn compile` 之类的入口。提交前的主要"验证"是把插件装到一个真实项目上跑一遍 `/team` 或 `/dev`；此外 `evals/` 下有针对 Phase 0 参数解析/前置校验的 `claude plugin eval` 回归用例（该 CLI 功能目前 early access，未开启时仅作为文档化的验收标准，详见 `evals/README.md`）。
+不存在 `npm test` / `mvn compile` 之类的入口。提交前的主要"验证"是把插件装到一个真实项目上跑一遍 `/team` 或 `/dev`；此外 `evals/` 下有针对 Phase 0 参数解析/前置校验/运行环境门禁的 `claude plugin eval` 回归用例（改动 team Phase 0 后跑一遍，命令与成本见 `evals/README.md`；0.2 之后的控制流 eval 到不了，仍按 `evals/manual-acceptance.md` 人工验收）。
 
 `--from=X` 等于声明 X 之前的角色不主动启动，但若下游闭环（tester BLOCK / reviewer BLOCK）需要它们，按需首次启动进入"清单驱动模式"。完整决策矩阵见 `skills/team/SKILL.md` §6.1 表。
 
@@ -17,7 +17,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 整个插件是一个**编排 + 5 固定角色 + 1 条件触发角色**的工作流，依赖 Claude Code 的 Agent Team API：`Agent(name=…)` 启动 teammate / `SendMessage` 通信与 shutdown / `ListAgents` 主动核对存活 / `TaskStop` 强制回收。
 
-> **API 版本红线（v2.1.178 起）**：`TeamCreate` 与 `TeamDelete` **已被移除**，`Agent` 的 `team_name` 入参**已废弃且被忽略**。当前语义是「每会话唯一隐式团队」：团队名由会话 ID 派生（`session-{前8位}`）不可指定，`Agent(...)` 带 `name` 即自动成为 teammate，会话退出时团队目录自动清理。另需 `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1` 才启用 teammate（否则退化为普通 subagent，双向通信与召回全部失效），team/SKILL.md Phase 0.1b 有门禁探测（刻意排在 0.0/0.1 参数与前置校验之后——用户输入类报错优先，且不改变 evals 三个 Phase 0 场景的期望输出）。改动流程时**不要再写回这几个已移除的工具**。
+> **API 版本红线（v2.1.178 起）**：`TeamCreate` 与 `TeamDelete` **已被移除**，`Agent` 的 `team_name` 入参**已废弃且被忽略**。当前语义是「每会话唯一隐式团队」：团队名由会话 ID 派生（`session-{前8位}`）不可指定，`Agent(...)` 带 `name` 即自动成为 teammate，会话退出时团队目录自动清理。另需 `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1` 才启用 teammate（否则退化为普通 subagent，双向通信与召回全部失效），team/SKILL.md Phase 0.1b 有门禁探测（刻意排在 0.0/0.1 参数与前置校验之后——用户输入类报错优先，且不改变 evals 中 0.0/0.1 三个场景的期望输出）。改动流程时**不要再写回这几个已移除的工具**。
 
 ```
 team (编排，fable)

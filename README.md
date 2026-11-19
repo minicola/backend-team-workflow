@@ -66,7 +66,7 @@ git config backend-team-workflow.archivePurgeDays 30       # 宽限期，缺省 
 
 修改 `skills/<role>/SKILL.md` 后执行 `/reload-plugins` 即可热生效。
 
-回归验证：`evals/` 下有针对 Phase 0 参数解析/前置校验的 `claude plugin eval` 用例（该 CLI 功能目前 early access；未开启时按 `evals/README.md` 人工对照 rubric 验收）。
+回归验证：`evals/` 下有针对 Phase 0 参数解析/前置校验/运行环境门禁的 `claude plugin eval` 用例，运行方式与成本见 `evals/README.md`。
 
 ## 注意
 

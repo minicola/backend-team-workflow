@@ -1,3 +1,8 @@
+---
+type: llm
+weight: 1
+---
+
 # 判定标准：--from=dev 前置文件缺失必须报错退出
 
 运行目录为空工作区（无 `.claude/workspace/task_plan.md` 与 `architecture.md`）。对照 team SKILL Phase 0.1 的要求逐项判定，全部满足记满分，任一不满足记 0 分：
